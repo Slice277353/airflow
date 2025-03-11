@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,35 @@ import (
 type ModelLoader struct {
 	scene  *core.Node
 	models []*core.Node
+}
+
+// Function to open a file dialog and return the selected file path
+func openFileDialog() (string, error) {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("powershell", "-Command", "Add-Type -AssemblyName System.Windows.Forms; "+
+			"$dlg = New-Object System.Windows.Forms.OpenFileDialog; "+
+			"$dlg.Filter = '3D Models (*.obj;*.gltf;*.dae)|*.obj;*.gltf;*.dae'; "+
+			"$dlg.ShowDialog() | Out-Null; "+
+			"Write-Output $dlg.FileName")
+	case "darwin": // macOS
+		cmd = exec.Command("osascript", "-e",
+			`set filePath to POSIX path of (choose file with prompt "Select a 3D model" of type {"obj", "gltf", "dae"})`,
+			"-e", `do shell script "echo " & quoted form of filePath`)
+	case "linux":
+		cmd = exec.Command("zenity", "--file-selection", "--title=Select a 3D model", "--file-filter=*.obj *.gltf *.dae")
+	default:
+		return "", fmt.Errorf("unsupported platform")
+	}
+
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(output)), nil
 }
 
 func (ml *ModelLoader) LoadModel(fpath string) error {
@@ -187,6 +218,8 @@ func updateWindParticles(deltaTime float32) {
 func main() {
 	a := app.App()
 	scene = core.NewNode()
+	var mesh *core.Node
+	ml := &ModelLoader{scene: scene} // Empty ModelLoader at start
 	gui.Manager().Set(scene)
 
 	// Physics variables
@@ -223,16 +256,16 @@ func main() {
 	onResize("", nil)
 
 	// Load model
-	ml := &ModelLoader{scene: scene}
-	filePath := "./cube.obj" // Adjust this path as needed
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		log.Fatal("File not found: ", filePath)
-	}
-	if err := ml.LoadModel(filePath); err != nil {
-		log.Fatal("Error loading model: ", err)
-	}
-	mesh := ml.models[0] // Use the first loaded model
-	mesh.SetPosition(0, 1, 0)
+	//ml := &ModelLoader{scene: scene}
+	//filePath := "./cube.obj" // Adjust this path as needed
+	//if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	//	log.Fatal("File not found: ", filePath)
+	//}
+	//if err := ml.LoadModel(filePath); err != nil {
+	//	log.Fatal("Error loading model: ", err)
+	//}
+	//mesh := ml.models[0] // Use the first loaded model
+	//mesh.SetPosition(0, 1, 0)
 
 	// Create surface
 	surfaceGeom := geometry.NewPlane(20, 20)
@@ -273,9 +306,37 @@ func main() {
 	// новая кнопка, ни за что не отвечает
 	emptyBtn := gui.NewButton("Import an object")
 	emptyBtn.SetPosition(800, 80)
-	emptyBtn.SetSize(80, 40)
+	emptyBtn.SetSize(120, 40)
 	emptyBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		filePath, err := openFileDialog()
+		if err != nil || filePath == "" {
+			log.Println("No file selected or error:", err)
+			return
+		}
+
+		log.Println("Selected file:", filePath)
+
+		// Remove old models before adding new ones
+		for _, m := range ml.models {
+			scene.Remove(m)
+		}
+		ml.models = nil
+
+		// Load new model
+		if err := ml.LoadModel(filePath); err != nil {
+			log.Println("Error loading model:", err)
+			return
+		}
+
+		// Assign the first model to mesh
+		if len(ml.models) > 0 {
+			mesh = ml.models[0]
+			mesh.SetPosition(0, 1, 0)
+		} else {
+			log.Println("No models were loaded.")
+		}
 	})
+
 	scene.Add(emptyBtn)
 
 	massInput := createNumericInput(mass, 320, 100, func(value float32) {
@@ -311,6 +372,10 @@ func main() {
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
 		renderer.Render(scene, cam)
+
+		if mesh == nil {
+			return
+		}
 
 		torusPos := mesh.Position()
 
