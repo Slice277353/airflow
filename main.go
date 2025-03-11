@@ -3,7 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +19,9 @@ import (
 	"github.com/g3n/engine/graphic"
 	"github.com/g3n/engine/gui"
 	"github.com/g3n/engine/light"
+	"github.com/g3n/engine/loader/collada"
+	"github.com/g3n/engine/loader/gltf"
+	"github.com/g3n/engine/loader/obj"
 	"github.com/g3n/engine/material"
 	"github.com/g3n/engine/math32"
 	"github.com/g3n/engine/renderer"
@@ -23,36 +29,89 @@ import (
 	"github.com/g3n/engine/window"
 )
 
+// ModelLoader handles loading of 3D models
+type ModelLoader struct {
+	scene  *core.Node
+	models []*core.Node
+}
+
+func (ml *ModelLoader) LoadModel(fpath string) error {
+	dir, file := filepath.Split(fpath)
+	ext := filepath.Ext(file)
+
+	switch ext {
+	case ".obj":
+		dec, err := obj.Decode(fpath, "")
+		if err != nil {
+			return err
+		}
+		grp, err := dec.NewGroup()
+		if err != nil {
+			return err
+		}
+		ml.scene.Add(grp)
+		ml.models = append(ml.models, grp)
+
+	case ".gltf":
+		data, err := os.ReadFile(fpath)
+		if err != nil {
+			return err
+		}
+		g, err := gltf.ParseJSON(string(data))
+		if err != nil {
+			return err
+		}
+		if g.Scene != nil {
+			log.Println("glTF model loaded, but node processing is required.")
+			// Note: Minimal glTF support; add scene processing if needed
+		} else {
+			log.Println("glTF Scene undefined, check the file.")
+		}
+
+	case ".dae":
+		dec, err := collada.Decode(fpath)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		dec.SetDirImages(dir)
+		s, err := dec.NewScene()
+		if err != nil {
+			return err
+		}
+		ml.scene.Add(s)
+		ml.models = append(ml.models, s.GetNode())
+	default:
+		return fmt.Errorf("unknown model format: %s", ext)
+	}
+	return nil
+}
+
 // WindSource represents a wind generator in the scene
 type WindSource struct {
-	Position  math32.Vector3 // Wind source position
-	Radius    float32        // Influence radius
-	Speed     float32        // Wind speed
-	Direction math32.Vector3 // Wind direction (normalized)
+	Position  math32.Vector3
+	Radius    float32
+	Speed     float32
+	Direction math32.Vector3
 }
 
 // WindParticle stores a particle's position and velocity
 type WindParticle struct {
-	Mesh     *graphic.Mesh  // The 3D particle
-	Velocity math32.Vector3 // Movement direction
-	Lifespan float32        // Time before disappearing
-	Elapsed  float32        // Time passed
+	Mesh     *graphic.Mesh
+	Velocity math32.Vector3
+	Lifespan float32
+	Elapsed  float32
 }
 
 var scene *core.Node
 var windParticles []*WindParticle
 
 func createNumericInput(defaultValue float32, x, y float32, onChange func(value float32)) *gui.Edit {
-	textInput := gui.NewEdit(100, fmt.Sprintf("%.2f", defaultValue)) // Width: 100px, default text
+	textInput := gui.NewEdit(100, fmt.Sprintf("%.2f", defaultValue))
 	textInput.SetPosition(x, y)
 
 	textInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
 		text := textInput.Text()
-
-		// Remove invalid characters (allow digits, one dot, and optional negative sign at the start)
 		filteredText := filterNumericInput(text)
-
-		// Update text if filtering changed anything
 		if text != filteredText {
 			textInput.SetText(filteredText)
 		}
@@ -65,7 +124,7 @@ func createNumericInput(defaultValue float32, x, y float32, onChange func(value 
 			if value, err := strconv.ParseFloat(text, 32); err == nil && value > 0 {
 				onChange(float32(value))
 			} else {
-				textInput.SetText(fmt.Sprintf("%.2f", defaultValue)) // Reset to default if invalid
+				textInput.SetText(fmt.Sprintf("%.2f", defaultValue))
 			}
 		}
 	})
@@ -73,7 +132,6 @@ func createNumericInput(defaultValue float32, x, y float32, onChange func(value 
 	return textInput
 }
 
-// Helper function to filter numeric input
 func filterNumericInput(input string) string {
 	var builder strings.Builder
 	dotCount := 0
@@ -81,10 +139,10 @@ func filterNumericInput(input string) string {
 	for i, char := range input {
 		if char >= '0' && char <= '9' {
 			builder.WriteRune(char)
-		} else if char == '.' && dotCount == 0 { // Allow one decimal point
+		} else if char == '.' && dotCount == 0 {
 			builder.WriteRune(char)
 			dotCount++
-		} else if char == '-' && i == 0 { // Allow negative sign only at the start
+		} else if char == '-' && i == 0 {
 			builder.WriteRune(char)
 		}
 	}
@@ -96,14 +154,13 @@ func createWindParticle(position, direction math32.Vector3) *WindParticle {
 	particleGeom := geometry.NewSphere(0.05, 8, 8)
 	particleMat := material.NewStandard(math32.NewColor("White"))
 	particleMesh := graphic.NewMesh(particleGeom, particleMat)
-	particleMesh.SetPositionVec(&position) // Use pointer
-
+	particleMesh.SetPositionVec(&position)
 	scene.Add(particleMesh)
 
 	return &WindParticle{
 		Mesh:     particleMesh,
-		Velocity: *direction.Clone().MultiplyScalar(0.5), // Move in wind direction
-		Lifespan: 2.0,                                    // Lasts for 2 seconds
+		Velocity: *direction.Clone().MultiplyScalar(0.5),
+		Lifespan: 2.0,
 		Elapsed:  0,
 	}
 }
@@ -113,18 +170,14 @@ func updateWindParticles(deltaTime float32) {
 
 	for _, particle := range windParticles {
 		particle.Elapsed += deltaTime
-
-		// Remove expired particles
 		if particle.Elapsed >= particle.Lifespan {
 			scene.Remove(particle.Mesh)
 			continue
 		}
 
-		// Move particle
 		pos := particle.Mesh.Position()
 		pos.Add(&particle.Velocity)
 		particle.Mesh.SetPositionVec(&pos)
-
 		newParticles = append(newParticles, particle)
 	}
 
@@ -132,20 +185,18 @@ func updateWindParticles(deltaTime float32) {
 }
 
 func main() {
-	// Initialize app
 	a := app.App()
 	scene = core.NewNode()
 	gui.Manager().Set(scene)
 
 	// Physics variables
 	velocity := math32.NewVector3(0, 0, 0)
-	var dragCoefficient float32 = 0.47 // Approximate for a torus
-	const airDensity = 1.225           // kg/m³ (standard air density)
-	const area = 1.0                   // Simplified cross-sectional area
-	var mass float32 = 1.0             // Mass of the torus
-	const gravity = -9.8               // Gravity acceleration (m/s²)
+	var dragCoefficient float32 = 0.47
+	const airDensity = 1.225
+	const area = 1.0
+	var mass float32 = 1.0
+	const gravity = -9.8
 
-	// Data for serialization
 	type SimulationData struct {
 		Time            float32
 		Acceleration    math32.Vector3
@@ -171,12 +222,17 @@ func main() {
 	a.Subscribe(window.OnWindowSize, onResize)
 	onResize("", nil)
 
-	// Create torus
-	geom := geometry.NewTorus(1, 0.4, 12, 32, math32.Pi*2)
-	mat := material.NewStandard(math32.NewColor("DarkBlue"))
-	mesh := graphic.NewMesh(geom, mat)
+	// Load model
+	ml := &ModelLoader{scene: scene}
+	filePath := "./cube.obj" // Adjust this path as needed
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Fatal("File not found: ", filePath)
+	}
+	if err := ml.LoadModel(filePath); err != nil {
+		log.Fatal("Error loading model: ", err)
+	}
+	mesh := ml.models[0] // Use the first loaded model
 	mesh.SetPosition(0, 1, 0)
-	scene.Add(mesh)
 
 	// Create surface
 	surfaceGeom := geometry.NewPlane(20, 20)
@@ -185,13 +241,12 @@ func main() {
 	surfaceMesh.SetRotationX(-math32.Pi / 2)
 	scene.Add(surfaceMesh)
 
-	// Define wind sources
+	// Wind sources
 	windSources := []WindSource{
 		{Position: *math32.NewVector3(2, 1, 0), Radius: 3.0, Speed: 10.0, Direction: *math32.NewVector3(-1, 0, 0).Normalize()},
 		{Position: *math32.NewVector3(-2, 1, 0), Radius: 2.0, Speed: 5.0, Direction: *math32.NewVector3(1, 0, 0).Normalize()},
 	}
 
-	// Display wind sources as red spheres
 	for _, wind := range windSources {
 		sphereGeom := geometry.NewSphere(0.2, 16, 16)
 		sphereMat := material.NewStandard(math32.NewColor("Red"))
@@ -215,6 +270,14 @@ func main() {
 	})
 	scene.Add(btn)
 
+	// новая кнопка, ни за что не отвечает
+	emptyBtn := gui.NewButton("Import an object")
+	emptyBtn.SetPosition(800, 80)
+	emptyBtn.SetSize(80, 40)
+	emptyBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+	})
+	scene.Add(emptyBtn)
+
 	massInput := createNumericInput(mass, 320, 100, func(value float32) {
 		mass = value
 	})
@@ -227,7 +290,6 @@ func main() {
 	dragInput.SetPosition(100, 150)
 	scene.Add(dragInput)
 
-	// Wind speed inputs for each wind source
 	for i, wind := range windSources {
 		windSpeedInput := createNumericInput(wind.Speed, 320, 200+float32(i*50), func(value float32) {
 			windSources[i].Speed = value
@@ -243,7 +305,6 @@ func main() {
 	scene.Add(pointLight)
 	scene.Add(helper.NewAxes(1.0))
 
-	// Background color
 	a.Gls().ClearColor(0.5, 0.5, 0.5, 1.0)
 
 	// Application loop
@@ -257,12 +318,10 @@ func main() {
 			totalForce := math32.NewVector3(0, 0, 0)
 			angularMomentum := math32.NewVector3(0, 0, 0)
 			windPower := float32(0)
-			dampingEffect := float32(0.01) // Reduced damping effect
+			dampingEffect := float32(0.01)
 
 			for i := range windSources {
 				wind := &windSources[i]
-
-				// Compute distance
 				distanceVec := torusPos.Clone().Sub(&wind.Position)
 				distance := distanceVec.Length()
 
@@ -272,24 +331,17 @@ func main() {
 					dragForce := windVelocity.Clone().Normalize().MultiplyScalar(dragMagnitude)
 					totalForce.Add(dragForce)
 
-					// Calculate wind power absorption
 					windPower += dragMagnitude * wind.Speed
-
-					// Calculate angular momentum
 					angularMomentum.Add(dragForce.Cross(&torusPos))
 
-					// Add wind particles
 					windParticles = append(windParticles, createWindParticle(wind.Position, wind.Direction))
 				}
 			}
 
-			// Add gravity force
 			gravityForce := math32.NewVector3(0, gravity*mass, 0)
 			totalForce.Add(gravityForce)
 
-			// Apply damping effect
 			velocity.MultiplyScalar(1 - dampingEffect)
-
 			dt := float32(deltaTime.Seconds())
 			acceleration := totalForce.DivideScalar(mass)
 			velocity.Add(acceleration.MultiplyScalar(dt))
@@ -301,7 +353,6 @@ func main() {
 			displacement := velocity.Clone().MultiplyScalar(dt)
 			mesh.SetPositionVec(torusPos.Add(displacement))
 
-			// Check for collision with surface
 			if mesh.Position().Y < 1 {
 				pos := mesh.Position()
 				pos.SetY(1)
@@ -309,10 +360,8 @@ func main() {
 				velocity.SetY(0)
 			}
 
-			// Debug prints
 			fmt.Printf("Position: %v, Velocity: %v, Total Force: %v\n", mesh.Position(), velocity, totalForce)
 
-			// Collect data for serialization
 			simulationData = append(simulationData, SimulationData{
 				Time:            float32(time.Now().UnixNano()) / 1e9,
 				Acceleration:    *acceleration,
@@ -322,13 +371,15 @@ func main() {
 			})
 		}
 
-		// Update wind particles (move & remove expired)
 		updateWindParticles(float32(deltaTime.Seconds()))
 	})
 
-	// Serialize data to JSON with a unique filename
+	// Serialize data
 	filename := fmt.Sprintf("simulation_data_%d.json", time.Now().UnixNano())
-	file, _ := os.Create(filename)
+	file, err := os.Create(filename)
+	if err != nil {
+		log.Fatal("Error creating simulation data file: ", err)
+	}
 	defer file.Close()
 	json.NewEncoder(file).Encode(simulationData)
 }
