@@ -305,8 +305,36 @@ func main() {
 
 	// новая кнопка, ни за что не отвечает
 	emptyBtn := gui.NewButton("Import an object")
-	emptyBtn.SetPosition(800, 80)
 	emptyBtn.SetSize(120, 40)
+	scene.Add(emptyBtn)
+
+	updateButtonLayout := func(w, h int) {
+		const minWidth, minHeight = 400, 200 // Минимальные размеры окна
+
+		if w < minWidth || h < minHeight {
+			emptyBtn.SetVisible(false) // Скрываем кнопку, если окно слишком маленькое
+			return
+		}
+		emptyBtn.SetVisible(true)
+
+		// Адаптивные размеры и позиция
+		btnWidth := float32(w) * 0.15                   // 15% от ширины окна
+		btnHeight := float32(h) * 0.05                  // 5% от высоты окна
+		btnX := float32(w) - btnWidth - float32(w)*0.05 // 5% отступ справа
+		btnY := float32(h) * 0.1                        // 10% от верха
+
+		emptyBtn.SetSize(btnWidth, btnHeight)
+		emptyBtn.SetPosition(btnX, btnY)
+	}
+
+	a.Subscribe(window.OnWindowSize, func(evname string, ev interface{}) {
+		w, h := a.GetSize() // Получаем текущие размеры окна
+		updateButtonLayout(w, h)
+	})
+
+	w, h := a.GetSize()
+	updateButtonLayout(w, h)
+
 	emptyBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
 		filePath, err := openFileDialog()
 		if err != nil || filePath == "" {
@@ -322,7 +350,6 @@ func main() {
 		}
 		ml.models = nil
 
-		// Load new model
 		if err := ml.LoadModel(filePath); err != nil {
 			log.Println("Error loading model:", err)
 			return
@@ -336,8 +363,6 @@ func main() {
 			log.Println("No models were loaded.")
 		}
 	})
-
-	scene.Add(emptyBtn)
 
 	massInput := createNumericInput(mass, 320, 100, func(value float32) {
 		mass = value
