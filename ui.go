@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/g3n/engine/app"
+	"github.com/g3n/engine/math32"
 	"log"
 	"strconv"
 	"strings"
@@ -31,6 +32,10 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader) {
 	emptyBtn.SetSize(120, 40)
 	scene.Add(emptyBtn)
 
+	addWindBtn := gui.NewButton("Add Wind Source")
+	addWindBtn.SetSize(120, 40)
+	scene.Add(addWindBtn)
+
 	updateButtonLayout := func(w, h int) {
 		const minWidth, minHeight = 400, 200
 		if w < minWidth || h < minHeight {
@@ -46,6 +51,9 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader) {
 
 		emptyBtn.SetSize(btnWidth, btnHeight)
 		emptyBtn.SetPosition(btnX, btnY)
+
+		addWindBtn.SetSize(btnWidth, btnHeight)
+		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)
 	}
 
 	app.App().Subscribe(window.OnWindowSize, func(evname string, ev interface{}) {
@@ -88,6 +96,17 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader) {
 			log.Println("No models were loaded.")
 			mesh = nil
 		}
+	})
+
+	addWindBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		defaultPos := *math32.NewVector3(0, 1, 0)
+		windSources = addWindSource(windSources, scene, defaultPos)
+
+		newIndex := len(windSources) - 1
+		windSpeedInput := createNumericInput((windSources)[newIndex].Speed, 100, 200+float32(newIndex*50), func(value float32) {
+			(windSources)[newIndex].Speed = value
+		})
+		scene.Add(windSpeedInput)
 	})
 
 	// Use global mass and dragCoefficient from physics.go

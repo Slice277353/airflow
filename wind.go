@@ -13,6 +13,7 @@ type WindSource struct {
 	Radius    float32
 	Speed     float32
 	Direction math32.Vector3
+	Node      *graphic.Mesh // 25.03
 }
 
 type WindParticle struct {
@@ -30,15 +31,34 @@ func initializeWindSources(scene *core.Node) []WindSource {
 		{Position: *math32.NewVector3(-2, 1, 0), Radius: 2.0, Speed: 5.0, Direction: *math32.NewVector3(1, 0, 0).Normalize()},
 	}
 
-	for _, wind := range windSources {
+	for i := range windSources {
 		sphereGeom := geometry.NewSphere(0.2, 16, 16)
 		sphereMat := material.NewStandard(math32.NewColor("Red"))
 		sphereMesh := graphic.NewMesh(sphereGeom, sphereMat)
-		sphereMesh.SetPositionVec(&wind.Position)
+		sphereMesh.SetPositionVec(&windSources[i].Position)
+		windSources[i].Node = sphereMesh // Store the mesh in the WindSource struct
 		scene.Add(sphereMesh)
-	}
+	} // a few changes in here as well
 
 	return windSources
+}
+
+func addWindSource(windSource []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
+	newWind := WindSource{
+		Position:  position,
+		Radius:    2.0,
+		Speed:     5.0,
+		Direction: *math32.NewVector3(1, 0, 0).Normalize(),
+	}
+
+	sphereGeom := geometry.NewSphere(0.2, 16, 16)
+	sphereMat := material.NewStandard(math32.NewColor("Red"))
+	sphereMesh := graphic.NewMesh(sphereGeom, sphereMat)
+	sphereMesh.SetPositionVec(&newWind.Position)
+	newWind.Node = sphereMesh
+	scene.Add(sphereMesh)
+
+	return append(windSource, newWind)
 }
 
 func createWindParticle(position, direction math32.Vector3) *WindParticle {
