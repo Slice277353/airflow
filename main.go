@@ -21,16 +21,18 @@ import (
 
 var scene *core.Node
 var mesh *core.Node
+var windEnabled bool
 
 func main() {
 	a := app.App()
 	scene = core.NewNode()
 	ml := &ModelLoader{scene: scene}
 	gui.Manager().Set(scene)
+	windEnabled = false
 
 	// Camera setup
 	cam := camera.New(1)
-	cam.SetPosition(0, 2, 3) // Closer to the model at (0, 1, 0)
+	cam.SetPosition(0, 2, 2)
 	cam.LookAt(&math32.Vector3{X: 0, Y: 1, Z: 0}, &math32.Vector3{X: 0, Y: 1, Z: 0})
 	scene.Add(cam)
 	camera.NewOrbitControl(cam)
@@ -55,6 +57,9 @@ func main() {
 	windSources := initializeWindSources(scene)
 	initializeUI(scene, windSources, ml)
 
+	// Initialize fluid simulation
+	initializeFluidSimulation(scene, windSources)
+
 	// Lights and helpers
 	scene.Add(light.NewAmbient(&math32.Color{R: 1.0, G: 1.0, B: 1.0}, 0.8))
 	pointLight := light.NewPoint(&math32.Color{R: 1, G: 1, B: 1}, 5.0)
@@ -65,19 +70,36 @@ func main() {
 	a.Gls().ClearColor(0.5, 0.5, 0.5, 1.0)
 
 	// Application loop
+	lastParticleTime := time.Now()
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
 		renderer.Render(scene, cam)
 
-		log.Printf("Scene children count: %d", len(scene.Children()))
+		log.Printf("Scene children count: %d, Wind particles: %d", len(scene.Children()), len(windParticles))
+
+		// Continuous particle generation from wind sources
+		if windEnabled {
+			if time.Since(lastParticleTime).Milliseconds() >= 100 { // Spawn every 100ms
+				for _, wind := range windSources {
+					windParticles = append(windParticles, createWindParticle(wind.Position, wind.Direction))
+					log.Printf("Spawning particle from wind source at: %v, Direction: %v", wind.Position, wind.Direction)
+				}
+				lastParticleTime = time.Now()
+			}
+		}
+
 		if mesh != nil {
 			log.Printf("Mesh is present at position: %v", mesh.Position())
 			updatePhysics(mesh, windSources, float32(deltaTime.Seconds()))
 		} else {
 			log.Println("Mesh is nil")
 		}
-		updateWindParticles(float32(deltaTime.Seconds()))
+		updateWindParticles(float32(deltaTime.Seconds()), scene, mesh)
+
+		// Simulate fluid dynamics
+		simulateFluid(float32(deltaTime.Seconds()))
 	})
 
+	// Save simulation data
 	saveSimulationData()
 }

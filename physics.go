@@ -18,7 +18,13 @@ var mass float32 = 1.0
 const gravity = -9.8
 
 func updatePhysics(mesh *core.Node, windSources []WindSource, dt float32) {
+	if mesh == nil {
+		log.Println("No mesh present in physics update")
+		return
+	}
+
 	torusPos := mesh.Position()
+	log.Printf("Mesh position: %v", torusPos)
 
 	totalForce := math32.NewVector3(0, 0, 0)
 	angularMomentum := math32.NewVector3(0, 0, 0)
@@ -29,6 +35,7 @@ func updatePhysics(mesh *core.Node, windSources []WindSource, dt float32) {
 		wind := &windSources[i]
 		distanceVec := torusPos.Clone().Sub(&wind.Position)
 		distance := distanceVec.Length()
+		log.Printf("Wind source %d at %v, Distance to mesh: %v, Radius: %v", i, wind.Position, distance, wind.Radius)
 
 		if distance <= wind.Radius {
 			windVelocity := wind.Direction.Clone().MultiplyScalar(wind.Speed)
@@ -40,6 +47,7 @@ func updatePhysics(mesh *core.Node, windSources []WindSource, dt float32) {
 			angularMomentum.Add(dragForce.Cross(&torusPos))
 
 			windParticles = append(windParticles, createWindParticle(wind.Position, wind.Direction))
+			log.Printf("Particle created at position: %v, Distance to mesh: %v", wind.Position, distance)
 		}
 	}
 
@@ -54,19 +62,19 @@ func updatePhysics(mesh *core.Node, windSources []WindSource, dt float32) {
 		velocity.Normalize().MultiplyScalar(10)
 	}
 
-	//Temporarily disable position update to test disappearance
-	//displacement := velocity.Clone().MultiplyScalar(dt)
-	//newPos := torusPos.Add(displacement)
-	//if newPos.Length() > 20 {
-	//	newPos.Normalize().MultiplyScalar(20)
-	//}
-	//if newPos.Y < 1 {
-	//	newPos.SetY(1)
-	//	velocity.SetY(0)
-	//}
-	//mesh.SetPositionVec(newPos)
+	// Re-enable position update
+	displacement := velocity.Clone().MultiplyScalar(dt)
+	newPos := torusPos.Add(displacement)
+	if newPos.Length() > 20 {
+		newPos.Normalize().MultiplyScalar(20)
+	}
+	if newPos.Y < 1 {
+		newPos.SetY(1)
+		velocity.SetY(0)
+	}
+	mesh.SetPositionVec(newPos)
 
-	log.Printf("Physics update - Calculated position: %v, Velocity: %v", torusPos, velocity)
+	log.Printf("Physics update - New position: %v, Velocity: %v", newPos, velocity)
 
 	recordSimulationData(dt, *acceleration, windPower, *angularMomentum, dampingEffect)
 }
