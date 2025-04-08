@@ -29,7 +29,7 @@ func openFileDialog() (string, error) {
 	case "windows":
 		cmd = exec.Command("powershell", "-Command", "Add-Type -AssemblyName System.Windows.Forms; "+
 			"$dlg = New-Object System.Windows.Forms.OpenFileDialog; "+
-			"$dlg.Filter = '3D Models (*.obj;*.gltf;*.dae)|*.obj;*.gltf;*.dae'; "+
+			"$dlg.Filter = '3D Models (*.obj;*.gltf;*.dae;*.glb)|*.obj;*.gltf;*.dae';*.glb; "+
 			"$dlg.ShowDialog() | Out-Null; "+
 			"Write-Output $dlg.FileName")
 	case "darwin":
@@ -37,7 +37,7 @@ func openFileDialog() (string, error) {
 			`set filePath to POSIX path of (choose file with prompt "Select a 3D model" of type {"obj", "gltf", "dae"})`,
 			"-e", `do shell script "echo " & quoted form of filePath`)
 	case "linux":
-		cmd = exec.Command("zenity", "--file-selection", "--title=Select a 3D model", "--file-filter=*.obj *.gltf *.dae")
+		cmd = exec.Command("zenity", "--file-selection", "--title=Select a 3D model", "--file-filter=*.obj *.gltf *.dae *.glb")
 	default:
 		return "", fmt.Errorf("unsupported platform")
 	}
@@ -67,7 +67,7 @@ func (ml *ModelLoader) LoadModel(fpath string) error {
 		ml.scene.Add(grp)
 		ml.models = append(ml.models, grp)
 
-	case ".gltf":
+	case ".gltf", ".glb":
 		data, err := os.ReadFile(fpath)
 		if err != nil {
 			return err
@@ -87,7 +87,7 @@ func (ml *ModelLoader) LoadModel(fpath string) error {
 			log.Println("GLTF Scene undefined, check the file.")
 			return fmt.Errorf("no scene defined in GLTF file")
 		}
-
+	
 	case ".dae":
 		dec, err := collada.Decode(fpath)
 		if err != nil && err != io.EOF {

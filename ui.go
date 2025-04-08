@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/g3n/engine/app"
 	"github.com/g3n/engine/math32"
+	"github.com/g3n/engine/math32"
 	"log"
 	"strconv"
 	"strings"
@@ -56,6 +57,9 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, c
 
 		emptyBtn.SetSize(btnWidth, btnHeight)
 		emptyBtn.SetPosition(btnX, btnY)
+
+		addWindBtn.SetSize(btnWidth, btnHeight)
+		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)
 
 		addWindBtn.SetSize(btnWidth, btnHeight)
 		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)

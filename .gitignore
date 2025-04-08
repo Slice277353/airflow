@@ -5,3 +5,8 @@ hellog3n
 screenshot.png
 
 .idea
+
+*.bin
+*.json
+*.glb
+*.gltf
