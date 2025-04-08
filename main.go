@@ -91,7 +91,9 @@ func main() {
 
 		if mesh != nil {
 			log.Printf("Mesh is present at position: %v", mesh.Position())
-			updatePhysics(mesh, windSources, float32(deltaTime.Seconds()))
+			for _, particle := range windParticles {
+				updatePhysics(particle, mesh, velocity, mass, float32(deltaTime.Seconds()))
+			}
 		} else {
 			log.Println("Mesh is nil")
 		}

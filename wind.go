@@ -107,36 +107,14 @@ func updateWindParticles(deltaTime float32, scene *core.Node, mesh *core.Node) {
 			continue
 		}
 
-		// Update position
-		pos := particle.Mesh.Position()
-		pos.Add(particle.Velocity.Clone().MultiplyScalar(deltaTime))
-		particle.Mesh.SetPositionVec(&pos)
-
-		// Check collision with mesh
+		// Update physics for the particle
 		if mesh != nil {
-			meshPos := mesh.Position()
-			meshBounds := mesh.BoundingBox()
-			if !meshBounds.Min.Equals(&meshBounds.Max) {
-				center := math32.NewVector3(0, 0, 0)
-				meshBounds.Center(center)
-				size := math32.NewVector3(0, 0, 0)
-				meshBounds.Size(size)
-				halfExtents := size.MultiplyScalar(0.5)
-				center.Add(&meshPos)
-
-				if math32.Abs(pos.X-center.X) < halfExtents.X &&
-					math32.Abs(pos.Y-center.Y) < halfExtents.Y &&
-					math32.Abs(pos.Z-center.Z) < halfExtents.Z {
-					normal := center.Sub(&pos).Normalize()
-					particle.Velocity.Reflect(normal).MultiplyScalar(0.7) // Bounce with reduced speed
-					continue
-				}
-			}
+			updatePhysics(particle, mesh, velocity, mass, deltaTime)
 		}
 
 		// Keep particle in scene bounds (optional)
-		if pos.Length() > 20 {
-			log.Printf("Particle out of bounds at: %v", pos)
+		if particle.Position.Length() > 20 {
+			log.Printf("Particle out of bounds at: %v", particle.Position)
 			scene.Remove(particle.Mesh)
 			continue
 		}

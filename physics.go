@@ -15,13 +15,29 @@ var mass float32 = 1.0
 
 const gravity = -9.8
 
-func updatePhysics(particle *WindParticle, object *core.Node, objectVelocity *math32.Vector3, objectMass float32) {
+func updatePhysics(particle *WindParticle, object *core.Node, objectVelocity *math32.Vector3, objectMass float32, deltaTime float32) {
 	if particle == nil || object == nil || !particle.Alive {
 		return
 	}
 
-	objectPos := object.Position()                  // this returns a Vector3 (by value)
-	distanceVec := objectPos.Sub(particle.Position) // Vector3.Sub() returns *Vector3
+	// Apply gravity to the particle
+	gravityForce := math32.NewVector3(0, gravity*particle.Mass, 0)
+	particle.Velocity.Add(gravityForce.MultiplyScalar(deltaTime))
+
+	// Calculate drag force
+	velocityMagnitude := particle.Velocity.Length()
+	dragForce := particle.Velocity.Clone().Normalize().MultiplyScalar(
+		-0.5 * airDensity * dragCoefficient * area * velocityMagnitude * velocityMagnitude,
+	)
+	particle.Velocity.Add(dragForce.MultiplyScalar(deltaTime))
+
+	// Update particle position
+	particle.Position.Add(particle.Velocity.Clone().MultiplyScalar(deltaTime))
+	particle.Mesh.SetPositionVec(particle.Position)
+
+	// Check interaction with the object
+	objectPos := object.Position()
+	distanceVec := objectPos.Sub(particle.Position)
 	distance := distanceVec.Length()
 	influenceRadius := float32(3.0)
 	if distance > influenceRadius {
@@ -38,6 +54,21 @@ func updatePhysics(particle *WindParticle, object *core.Node, objectVelocity *ma
 	acceleration := force.DivideScalar(objectMass)
 	objectVelocity.Add(acceleration)
 
-	// Optional: particle dies after pushing
-	// particle.Alive = false
+	// Handle collision with the object
+	objectBounds := object.BoundingBox()
+	if !objectBounds.Min.Equals(&objectBounds.Max) {
+		center := math32.NewVector3(0, 0, 0)
+		objectBounds.Center(center)
+		size := math32.NewVector3(0, 0, 0)
+		objectBounds.Size(size)
+		halfExtents := size.MultiplyScalar(0.5)
+		center.Add(&objectPos)
+
+		if math32.Abs(particle.Position.X-center.X) < halfExtents.X &&
+			math32.Abs(particle.Position.Y-center.Y) < halfExtents.Y &&
+			math32.Abs(particle.Position.Z-center.Z) < halfExtents.Z {
+			normal := center.Sub(particle.Position).Normalize()
+			particle.Velocity.Reflect(normal).MultiplyScalar(0.7) // Bounce with reduced speed
+		}
+	}
 }
