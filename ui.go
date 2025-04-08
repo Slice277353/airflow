@@ -2,11 +2,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/g3n/engine/app"
-	"github.com/g3n/engine/math32"
 	"log"
 	"strconv"
 	"strings"
+
+	"github.com/g3n/engine/app"
+	"github.com/g3n/engine/math32"
 
 	"github.com/g3n/engine/camera"
 	"github.com/g3n/engine/core"
@@ -14,7 +15,14 @@ import (
 	"github.com/g3n/engine/window"
 )
 
+func openFileDialog(string, error) {
+	// Placeholder implementation for file dialog
+	// Replace this with actual file dialog logic for your platform
+	return "/path/to/selected/file.obj", nil
+}
+
 func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, cam camera.ICamera) {
+	// Toggle wind button
 	windEnabled := false
 	btn := gui.NewButton("Wind OFF")
 	btn.SetPosition(100, 40)
@@ -29,50 +37,11 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, c
 	})
 	scene.Add(btn)
 
-	emptyBtn := gui.NewButton("Import an object")
-	emptyBtn.SetSize(120, 40)
-	scene.Add(emptyBtn)
-
-	addWindBtn := gui.NewButton("Add Wind Source")
-	addWindBtn.SetSize(120, 40)
-	scene.Add(addWindBtn)
-
-	waitingForWindPlacement := false
-
-	updateButtonLayout := func(w, h int) {
-		const minWidth, minHeight = 400, 200
-		if w < minWidth || h < minHeight {
-			emptyBtn.SetVisible(false)
-			addWindBtn.SetVisible(false)
-			return
-		}
-		emptyBtn.SetVisible(true)
-		addWindBtn.SetVisible(true)
-
-		btnWidth := float32(w) * 0.15
-		btnHeight := float32(h) * 0.05
-		btnX := float32(w) - btnWidth - float32(w)*0.05
-		btnY := float32(h) * 0.1
-
-		emptyBtn.SetSize(btnWidth, btnHeight)
-		emptyBtn.SetPosition(btnX, btnY)
-
-		addWindBtn.SetSize(btnWidth, btnHeight)
-		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)
-
-		addWindBtn.SetSize(btnWidth, btnHeight)
-		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)
-	}
-
-	app.App().Subscribe(window.OnWindowSize, func(evname string, ev interface{}) {
-		w, h := app.App().GetSize()
-		updateButtonLayout(w, h)
-	})
-
-	w, h := app.App().GetSize()
-	updateButtonLayout(w, h)
-
-	emptyBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+	// Import model button
+	importBtn := gui.NewButton("Import Model")
+	importBtn.SetSize(120, 40)
+	importBtn.SetPosition(100, 100)
+	importBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
 		filePath, err := openFileDialog()
 		if err != nil || filePath == "" {
 			log.Println("No file selected or error:", err)
@@ -97,27 +66,27 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, c
 		if len(ml.models) > 0 {
 			mesh = ml.models[0]
 			scene.Add(mesh)
-			// Set position directly (remove centering logic for now)
 			mesh.SetPosition(0, 1, 0)
-			log.Printf("New mesh loaded and added to scene at position: %v", mesh.Position())
+			log.Printf("New model loaded and added to scene at position: %v", mesh.Position())
 		} else {
 			log.Println("No models were loaded.")
 			mesh = nil
 		}
 	})
+	scene.Add(importBtn)
 
+	// Add wind source button
+	addWindBtn := gui.NewButton("Add Wind Source")
+	addWindBtn.SetSize(120, 40)
+	addWindBtn.SetPosition(100, 160)
+	waitingForWindPlacement := false
 	addWindBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		//defaultPos := *math32.NewVector3(0, 1, 0)
-		//windSources = addWindSource(windSources, scene, defaultPos)
-		//
-		//newIndex := len(windSources) - 1
-		//windSpeedInput := createNumericInput((windSources)[newIndex].Speed, 100, 200+float32(newIndex*50), func(value float32) {
-		//	(windSources)[newIndex].Speed = value
-		//})
-		//scene.Add(windSpeedInput)
 		waitingForWindPlacement = true
 		log.Println("Click on the scene to place the wind source")
 	})
+	scene.Add(addWindBtn)
+
+	// Handle mouse click for wind source placement
 	app.App().Subscribe(window.OnMouseDown, func(evname string, ev interface{}) {
 		if !waitingForWindPlacement {
 			return
@@ -147,79 +116,56 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, c
 		invViewProjMatrix := &math32.Matrix4{}
 		err := invViewProjMatrix.GetInverse(viewProjMatrix)
 		if err != nil {
-			log.Println("failed to invert view-projection matrix")
+			log.Println("Failed to invert view-projection matrix")
 			return
 		}
 
 		// Define near and far points in NDC
-		nearNDC := math32.NewVector4(x, y, 0, 1) // Near plane (z=0 in NDC)
-		farNDC := math32.NewVector4(x, y, 1, 1)  // Far plane (z=1 in NDC)
+		nearNDC := math32.NewVector4(x, y, 0, 1)
+		farNDC := math32.NewVector4(x, y, 1, 1)
 
-		nearWorld := &math32.Vector4{}
-		farWorld := &math32.Vector4{}
-		nearNDC.ApplyMatrix4(invViewProjMatrix)
-		farNDC.ApplyMatrix4(invViewProjMatrix)
-		nearWorld.Copy(nearNDC)
-		farWorld.Copy(farNDC)
+		// Transform to world coordinates
+		nearWorld := nearNDC.ApplyMatrix4(invViewProjMatrix)
+		farWorld := farNDC.ApplyMatrix4(invViewProjMatrix)
 
-		// Perspective divide to convert from homogeneous coordinates to 3
-		// Perspective divide to convert from homogeneous coordinates to 3D
-		near := &math32.Vector3{}
-		far := &math32.Vector3{}
-		if nearWorld.W != 0 {
-			near.X = nearWorld.X / nearWorld.W
-			near.Y = nearWorld.Y / nearWorld.W
-			near.Z = nearWorld.Z / nearWorld.W
-		}
-		if farWorld.W != 0 {
-			far.X = farWorld.X / farWorld.W
-			far.Y = farWorld.Y / farWorld.W
-			far.Z = farWorld.Z / farWorld.W
-		}
+		// Perspective divide
+		near := math32.NewVector3(nearWorld.X/nearWorld.W, nearWorld.Y/nearWorld.W, nearWorld.Z/nearWorld.W)
+		far := math32.NewVector3(farWorld.X/farWorld.W, farWorld.Y/farWorld.W, farWorld.Z/farWorld.W)
 
-		// Compute the ray direction from near to far
+		// Compute ray direction
 		direction := far.Sub(near).Normalize()
 
 		// Compute intersection with the ground plane (y=0)
 		origin := cam.(*camera.Camera).GetNode().Position()
-		t := -origin.Y / direction.Y // Solve for t where y=0: origin.Y + t*direction.Y = 0
+		t := -origin.Y / direction.Y
 		if t < 0 {
 			log.Println("No intersection with ground plane")
 			return
 		}
 
-		// Compute the intersection point
-		intersectPoint := &math32.Vector3{}
-		intersectPoint.X = origin.X + t*direction.X
-		intersectPoint.Y = 0 // Ground plane
-		intersectPoint.Z = origin.Z + t*direction.Z
+		// Compute intersection point
+		intersectPoint := origin.Add(direction.MultiplyScalar(t))
 
-		// Spawn the wind source at the intersected point
-		addWindSource(windSources, scene, *intersectPoint)
-
-		newIndex := len(windSources) - 1
-		windSpeedInput := createNumericInput((windSources)[newIndex].Speed, 100, 200+float32(newIndex*50), func(value float32) {
-			(windSources)[newIndex].Speed = value
-		})
-		scene.Add(windSpeedInput)
-
+		// Add wind source at the intersection point
+		windSources = addWindSource(windSources, scene, *intersectPoint)
 		log.Printf("Wind source added at position: %v", intersectPoint)
 		waitingForWindPlacement = false
 	})
 
-	// Use global mass and dragCoefficient from physics.go
-	massInput := createNumericInput(mass, 100, 100, func(value float32) {
+	// Numeric inputs for global parameters
+	massInput := createNumericInput(mass, 100, 220, func(value float32) {
 		mass = value
 	})
 	scene.Add(massInput)
 
-	dragInput := createNumericInput(dragCoefficient, 100, 150, func(value float32) {
+	dragInput := createNumericInput(dragCoefficient, 100, 280, func(value float32) {
 		dragCoefficient = value
 	})
 	scene.Add(dragInput)
 
+	// Numeric inputs for wind source speeds
 	for i, wind := range windSources {
-		windSpeedInput := createNumericInput(wind.Speed, 100, 200+float32(i*50), func(value float32) {
+		windSpeedInput := createNumericInput(wind.Speed, 100, 340+float32(i*60), func(value float32) {
 			windSources[i].Speed = value
 		})
 		scene.Add(windSpeedInput)

@@ -56,6 +56,9 @@ func main() {
 	// Initialize wind sources
 	windSources = initializeWindSources(scene)
 
+	// Initialize the UI
+	initializeUI(scene, windSources, ml, cam)
+
 	// Application loop
 	lastParticleTime := time.Now()
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
