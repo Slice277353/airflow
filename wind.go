@@ -22,8 +22,10 @@ type WindSource struct {
 type WindParticle struct {
 	Mesh     *graphic.Mesh
 	Velocity math32.Vector3
+	Position *math32.Vector3
 	Lifespan float32
 	Elapsed  float32
+	Alive    bool
 }
 
 var windParticles []*WindParticle
