@@ -42,38 +42,27 @@ func initializeWindSources(scene *core.Node) []WindSource {
 		sphereMesh.SetPositionVec(&windSources[i].Position)
 		windSources[i].Node = sphereMesh // Store the mesh in the WindSource struct
 		scene.Add(sphereMesh)
-	}
+	} // a few changes in here as well
 
 	return windSources
 }
 
 func addWindSource(windSource []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
-
 	newWind := WindSource{
-
-		Position: position,
-
-		Radius: 2.0,
-
-		Speed: 5.0,
-
+		Position:  position,
+		Radius:    2.0,
+		Speed:     5.0,
 		Direction: *math32.NewVector3(1, 0, 0).Normalize(),
 	}
 
 	sphereGeom := geometry.NewSphere(0.2, 16, 16)
-
 	sphereMat := material.NewStandard(math32.NewColor("Red"))
-
 	sphereMesh := graphic.NewMesh(sphereGeom, sphereMat)
-
 	sphereMesh.SetPositionVec(&newWind.Position)
-
 	newWind.Node = sphereMesh
-
 	scene.Add(sphereMesh)
 
 	return append(windSource, newWind)
-
 }
 
 func createWindParticle(position, direction math32.Vector3) *WindParticle {

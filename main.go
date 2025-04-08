@@ -32,8 +32,9 @@ func main() {
 
 	// Camera setup
 	cam := camera.New(1)
-	cam.SetPosition(0, 2, 2)
-	cam.LookAt(&math32.Vector3{X: 0, Y: 1, Z: 0}, &math32.Vector3{X: 0, Y: 1, Z: 0})
+	cam.SetPosition(0, 2, 3) // Closer to the model at (0, 1, 0)
+	// Fixed up vector to avoid degenerate view matrix
+	cam.LookAt(&math32.Vector3{X: 0, Y: 1, Z: 0}, &math32.Vector3{X: 0, Y: 0, Z: 1})
 	scene.Add(cam)
 	camera.NewOrbitControl(cam)
 
@@ -55,7 +56,7 @@ func main() {
 
 	// Setup wind sources and UI
 	windSources := initializeWindSources(scene)
-	initializeUI(scene, windSources, ml)
+	initializeUI(scene, windSources, ml, cam)
 
 	// Initialize fluid simulation
 	initializeFluidSimulation(scene, windSources)
