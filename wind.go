@@ -49,52 +49,30 @@ func initializeWindSources(scene *core.Node) []WindSource {
 
 func addWindSource(windSource []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
 
- 
-
 	newWind := WindSource{
- 
 
-		Position:  position,
- 
+		Position: position,
 
-		Radius:    2.0,
- 
+		Radius: 2.0,
 
-		Speed:     5.0,
- 
+		Speed: 5.0,
 
 		Direction: *math32.NewVector3(1, 0, 0).Normalize(),
- 
-
 	}
- 
-
-
- 
 
 	sphereGeom := geometry.NewSphere(0.2, 16, 16)
- 
 
 	sphereMat := material.NewStandard(math32.NewColor("Red"))
- 
 
 	sphereMesh := graphic.NewMesh(sphereGeom, sphereMat)
- 
 
 	sphereMesh.SetPositionVec(&newWind.Position)
- 
 
 	newWind.Node = sphereMesh
- 
 
 	scene.Add(sphereMesh)
- 
-
-
- 
 
 	return append(windSource, newWind)
- 
 
 }
 
