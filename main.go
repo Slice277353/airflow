@@ -56,7 +56,7 @@ func main() {
 
 	// Setup wind sources and UI
 	windSources := initializeWindSources(scene)
-	initializeUI(scene, windSources, ml)
+	initializeUI(scene, windSources, ml, cam)
 
 	// Initialize fluid simulation
 	initializeFluidSimulation(scene, windSources)
