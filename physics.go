@@ -20,11 +20,10 @@ func updatePhysics(particle *WindParticle, object *core.Node, objectVelocity *ma
 		return
 	}
 
-	// Check distance
-	distanceVec := object.Position().Clone().Sub(particle.Position)
+	objectPos := object.Position()                  // this returns a Vector3 (by value)
+	distanceVec := objectPos.Sub(particle.Position) // Vector3.Sub() returns *Vector3
 	distance := distanceVec.Length()
-	influenceRadius := float32(3.0) // how close wind must be to affect
-
+	influenceRadius := float32(3.0)
 	if distance > influenceRadius {
 		return
 	}

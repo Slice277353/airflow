@@ -23,6 +23,7 @@ type WindParticle struct {
 	Mesh     *graphic.Mesh
 	Velocity math32.Vector3
 	Position *math32.Vector3
+	Mass     float32
 	Lifespan float32
 	Elapsed  float32
 	Alive    bool
