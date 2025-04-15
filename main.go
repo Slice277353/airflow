@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"time"
 
 	"github.com/g3n/engine/app"
@@ -23,6 +22,8 @@ var scene *core.Node
 var mesh *core.Node
 var windEnabled bool
 
+// Import ModelLoader from model_loader.go
+
 func main() {
 	a := app.App()
 	scene = core.NewNode()
@@ -32,8 +33,7 @@ func main() {
 
 	// Camera setup
 	cam := camera.New(1)
-	cam.SetPosition(0, 2, 3) // Closer to the model at (0, 1, 0)
-	// Fixed up vector to avoid degenerate view matrix
+	cam.SetPosition(0, 2, 5)
 	cam.LookAt(&math32.Vector3{X: 0, Y: 1, Z: 0}, &math32.Vector3{X: 0, Y: 0, Z: 1})
 	scene.Add(cam)
 	camera.NewOrbitControl(cam)
@@ -56,10 +56,7 @@ func main() {
 
 	// Setup wind sources and UI
 	windSources := initializeWindSources(scene)
-	initializeUI(scene, windSources, ml, cam)
-
-	// Initialize fluid simulation
-	initializeFluidSimulation(scene, windSources)
+	initializeUI(scene, &windSources, ml, cam)
 
 	// Lights and helpers
 	scene.Add(light.NewAmbient(&math32.Color{R: 1.0, G: 1.0, B: 1.0}, 0.8))
@@ -74,33 +71,23 @@ func main() {
 	lastParticleTime := time.Now()
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
-		renderer.Render(scene, cam)
 
-		log.Printf("Scene children count: %d, Wind particles: %d", len(scene.Children()), len(windParticles))
-
-		// Continuous particle generation from wind sources
 		if windEnabled {
+			// Spawn particles from each wind source periodically
 			if time.Since(lastParticleTime).Milliseconds() >= 100 { // Spawn every 100ms
-				for _, wind := range windSources {
-					windParticles = append(windParticles, createWindParticle(wind.Position, wind.Direction))
-					log.Printf("Spawning particle from wind source at: %v, Direction: %v", wind.Position, wind.Direction)
+				for _, source := range windSources {
+					particle := createWindParticle(scene, source.Position, source.Direction, source.Speed)
+					if particle != nil {
+						windParticles = append(windParticles, particle)
+					}
 				}
 				lastParticleTime = time.Now()
 			}
+
+			// Update all particles
+			simulateFluid(float32(deltaTime.Seconds()))
 		}
 
-
-		// Update wind particles
-		importedModel := ml.GetLoadedModel()
-		for _, particle := range windParticles {
-			updatePhysics(particle, importedModel, float32(deltaTime.Seconds()))
-		}
-		updateWindParticles(float32(deltaTime.Seconds()), scene, mesh)
-
-		// Simulate fluid dynamics
-		simulateFluid(float32(deltaTime.Seconds()))
+		renderer.Render(scene, cam)
 	})
-
-	// Save simulation data
-	saveSimulationData()
 }

@@ -2,93 +2,64 @@ package main
 
 import (
 	"fmt"
-	"github.com/g3n/engine/app"
-	"github.com/g3n/engine/math32"
 	"log"
 	"strconv"
-	"strings"
 
+	"github.com/g3n/engine/math32"
+
+	localcam "github.com/g3n/demos/hellog3n/camera"
 	"github.com/g3n/engine/camera"
 	"github.com/g3n/engine/core"
 	"github.com/g3n/engine/gui"
 	"github.com/g3n/engine/window"
 )
 
-func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, cam camera.ICamera) {
-	windEnabled := false
+func initializeUI(scene *core.Node, windSources *[]WindSource, ml *ModelLoader, cam camera.ICamera) {
+	// Create a panel for controls
+	panel := gui.NewPanel(300, 400)
+	panel.SetPosition(10, 10)
+	panel.SetColor4(&math32.Color4{R: 0.2, G: 0.2, B: 0.2, A: 0.8})
+	scene.Add(panel)
+
+	// Toggle wind button
 	btn := gui.NewButton("Wind OFF")
-	btn.SetPosition(100, 40)
-	btn.SetSize(80, 40)
+	btn.SetPosition(10, 10)
+	btn.SetSize(80, 30)
 	btn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
 		windEnabled = !windEnabled
 		if windEnabled {
 			btn.Label.SetText("Wind ON")
+			initializeFluidSimulation(scene, *windSources)
 		} else {
 			btn.Label.SetText("Wind OFF")
+			// Clean up existing particles
+			for _, p := range windParticles {
+				if p != nil && p.Mesh != nil {
+					scene.Remove(p.Mesh)
+				}
+			}
+			windParticles = nil
 		}
 	})
-	scene.Add(btn)
+	panel.Add(btn)
 
-	emptyBtn := gui.NewButton("Import an object")
-	emptyBtn.SetSize(120, 40)
-	scene.Add(emptyBtn)
-
-	addWindBtn := gui.NewButton("Add Wind Source")
-	addWindBtn.SetSize(120, 40)
-	scene.Add(addWindBtn)
-
-	waitingForWindPlacement := false
-
-	updateButtonLayout := func(w, h int) {
-		const minWidth, minHeight = 400, 200
-		if w < minWidth || h < minHeight {
-			emptyBtn.SetVisible(false)
-			addWindBtn.SetVisible(false)
-			return
-		}
-		emptyBtn.SetVisible(true)
-		addWindBtn.SetVisible(true)
-
-		btnWidth := float32(w) * 0.15
-		btnHeight := float32(h) * 0.05
-		btnX := float32(w) - btnWidth - float32(w)*0.05
-		btnY := float32(h) * 0.1
-
-		emptyBtn.SetSize(btnWidth, btnHeight)
-		emptyBtn.SetPosition(btnX, btnY)
-
-		addWindBtn.SetSize(btnWidth, btnHeight)
-		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)
-
-		addWindBtn.SetSize(btnWidth, btnHeight)
-		addWindBtn.SetPosition(btnX, btnY+btnHeight+10)
-	}
-
-	app.App().Subscribe(window.OnWindowSize, func(evname string, ev interface{}) {
-		w, h := app.App().GetSize()
-		updateButtonLayout(w, h)
-	})
-
-	w, h := app.App().GetSize()
-	updateButtonLayout(w, h)
-
-	emptyBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		filePath, err := openFileDialog()
+	// Import model button
+	importBtn := gui.NewButton("Import Model")
+	importBtn.SetSize(120, 30)
+	importBtn.SetPosition(10, 50)
+	importBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		filePath, err := openModelFileDialog()
 		if err != nil || filePath == "" {
 			log.Println("No file selected or error:", err)
 			return
 		}
 
-		log.Println("Selected file:", filePath)
-
-		// Remove old model
 		if mesh != nil {
 			scene.Remove(mesh)
 			mesh = nil
 		}
 		ml.models = nil
 
-		// Load new model
 		if err := ml.LoadModel(filePath); err != nil {
 			log.Println("Error loading model:", err)
 			return
@@ -97,132 +68,150 @@ func initializeUI(scene *core.Node, windSources []WindSource, ml *ModelLoader, c
 		if len(ml.models) > 0 {
 			mesh = ml.models[0]
 			scene.Add(mesh)
-			// Set position directly (remove centering logic for now)
 			mesh.SetPosition(0, 1, 0)
-			log.Printf("New mesh loaded and added to scene at position: %v", mesh.Position())
-		} else {
-			log.Println("No models were loaded.")
-			mesh = nil
 		}
 	})
+	panel.Add(importBtn)
 
+	// Add wind source button with mouse placement
+	addWindBtn := gui.NewButton("Add Wind Source")
+	addWindBtn.SetSize(120, 30)
+	addWindBtn.SetPosition(10, 90)
 	addWindBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		//defaultPos := *math32.NewVector3(0, 1, 0)
-		//windSources = addWindSource(windSources, scene, defaultPos)
-		//
-		//newIndex := len(windSources) - 1
-		//windSpeedInput := createNumericInput((windSources)[newIndex].Speed, 100, 200+float32(newIndex*50), func(value float32) {
-		//	(windSources)[newIndex].Speed = value
-		//})
-		//scene.Add(windSpeedInput)
-		waitingForWindPlacement = true
-		log.Println("Click on the scene to place the wind source")
+		// Create a function to handle mouse click for placement
+		mouseHandler := func(evname string, ev interface{}) {
+			mev := ev.(*window.MouseEvent)
+
+			// Create a ray from the camera through the mouse position
+			width, height := window.Get().GetSize()
+			x := 2.0*float32(mev.Xpos)/float32(width) - 1.0
+			y := -2.0*float32(mev.Ypos)/float32(height) + 1.0
+
+			ray := localcam.NewRayFromMouse(cam, x, y)
+
+			// Calculate intersection with y=1 plane (ground plane)
+			groundNormal := &math32.Vector3{X: 0, Y: 1, Z: 0}
+			groundPoint := &math32.Vector3{X: 0, Y: 1, Z: 0}
+
+			// Get ray vectors
+			rayOrigin := ray.Origin()
+			rayDir := ray.Direction()
+
+			// Calculate intersection using plane equation
+			denom := rayDir.Dot(groundNormal)
+			if math32.Abs(denom) > 1e-6 {
+				p0l0 := groundPoint.Clone().Sub(&rayOrigin)
+				t := p0l0.Dot(groundNormal) / denom
+				if t >= 0 {
+					// Calculate intersection point
+					intersectPoint := rayOrigin.Clone()
+					directionScaled := rayDir.Clone().MultiplyScalar(t)
+					intersectPoint.Add(directionScaled)
+
+					// Add the wind source at the intersection point
+					*windSources = addWindSource(*windSources, scene, *intersectPoint)
+					updateWindControls(panel, windSources)
+				}
+			}
+
+			// Remove the mouse handler after placement
+			window.Get().UnsubscribeID(window.OnMouseDown, "wind_source_placement")
+		}
+
+		// Subscribe to mouse click with an ID for later removal
+		window.Get().SubscribeID(window.OnMouseDown, "wind_source_placement", mouseHandler)
 	})
-	app.App().Subscribe(window.OnMouseDown, func(evname string, ev interface{}) {
-		if !waitingForWindPlacement {
-			return
+	panel.Add(addWindBtn)
+
+	updateWindControls(panel, windSources)
+}
+
+func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
+	// Remove existing controls by getting rid of all children after index 3
+	children := panel.Children()
+	for i := len(children) - 1; i >= 4; i-- {
+		if guiChild, ok := children[i].(gui.IPanel); ok {
+			panel.Remove(guiChild)
 		}
+	}
+	y := float32(130)
 
-		mev := ev.(*window.MouseEvent)
-		if mev.Button != window.MouseButtonLeft {
-			return
-		}
+	// Add controls for each wind source
+	for i := range *windSources {
+		// Source label
+		label := gui.NewLabel(fmt.Sprintf("Wind Source %d", i+1))
+		label.SetPosition(10, y)
+		panel.Add(label)
+		y += 25
 
-		// Get the mouse position in normalized device coordinates
-		w, h := app.App().GetSize()
-		x := float32(mev.Xpos)/float32(w)*2 - 1
-		y := -(float32(mev.Ypos)/float32(h)*2 - 1)
+		// Speed control
+		speedLabel := gui.NewLabel("Speed:")
+		speedLabel.SetPosition(20, y)
+		panel.Add(speedLabel)
 
-		// Get the projection and view matrices
-		projMatrix := &math32.Matrix4{}
-		viewMatrix := &math32.Matrix4{}
-		cam.ProjMatrix(projMatrix)
-		cam.ViewMatrix(viewMatrix)
-
-		// Compute the combined view-projection matrix
-		viewProjMatrix := &math32.Matrix4{}
-		viewProjMatrix.MultiplyMatrices(projMatrix, viewMatrix)
-
-		// Compute the inverse of the view-projection matrix
-		invViewProjMatrix := &math32.Matrix4{}
-		err := invViewProjMatrix.GetInverse(viewProjMatrix)
-		if err != nil {
-			log.Println("failed to invert view-projection matrix")
-			return
-		}
-
-		// Define near and far points in NDC
-		nearNDC := math32.NewVector4(x, y, 0, 1) // Near plane (z=0 in NDC)
-		farNDC := math32.NewVector4(x, y, 1, 1)  // Far plane (z=1 in NDC)
-
-		nearWorld := &math32.Vector4{}
-		farWorld := &math32.Vector4{}
-		nearNDC.ApplyMatrix4(invViewProjMatrix)
-		farNDC.ApplyMatrix4(invViewProjMatrix)
-		nearWorld.Copy(nearNDC)
-		farWorld.Copy(farNDC)
-
-		// Perspective divide to convert from homogeneous coordinates to 3
-		// Perspective divide to convert from homogeneous coordinates to 3D
-		near := &math32.Vector3{}
-		far := &math32.Vector3{}
-		if nearWorld.W != 0 {
-			near.X = nearWorld.X / nearWorld.W
-			near.Y = nearWorld.Y / nearWorld.W
-			near.Z = nearWorld.Z / nearWorld.W
-		}
-		if farWorld.W != 0 {
-			far.X = farWorld.X / farWorld.W
-			far.Y = farWorld.Y / farWorld.W
-			far.Z = farWorld.Z / farWorld.W
-		}
-
-		// Compute the ray direction from near to far
-		direction := far.Sub(near).Normalize()
-
-		// Compute intersection with the ground plane (y=0)
-		origin := cam.(*camera.Camera).GetNode().Position()
-		t := -origin.Y / direction.Y // Solve for t where y=0: origin.Y + t*direction.Y = 0
-		if t < 0 {
-			log.Println("No intersection with ground plane")
-			return
-		}
-
-		// Compute the intersection point
-		intersectPoint := &math32.Vector3{}
-		intersectPoint.X = origin.X + t*direction.X
-		intersectPoint.Y = 0 // Ground plane
-		intersectPoint.Z = origin.Z + t*direction.Z
-
-		// Spawn the wind source at the intersected point
-		addWindSource(windSources, scene, *intersectPoint)
-
-		newIndex := len(windSources) - 1
-		windSpeedInput := createNumericInput((windSources)[newIndex].Speed, 100, 200+float32(newIndex*50), func(value float32) {
-			(windSources)[newIndex].Speed = value
+		speedInput := gui.NewEdit(60, fmt.Sprintf("%.1f", (*windSources)[i].Speed))
+		speedInput.SetPosition(80, y)
+		speedInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
+			if val, err := strconv.ParseFloat(speedInput.Text(), 32); err == nil {
+				(*windSources)[i].Speed = float32(val)
+			}
 		})
-		scene.Add(windSpeedInput)
+		panel.Add(speedInput)
+		y += 25
 
-		log.Printf("Wind source added at position: %v", intersectPoint)
-		waitingForWindPlacement = false
-	})
+		// Temperature control
+		tempLabel := gui.NewLabel("Temp:")
+		tempLabel.SetPosition(20, y)
+		panel.Add(tempLabel)
 
-	// Use global mass and dragCoefficient from physics.go
-	massInput := createNumericInput(mass, 100, 100, func(value float32) {
-		mass = value
-	})
-	scene.Add(massInput)
-
-	dragInput := createNumericInput(dragCoefficient, 100, 150, func(value float32) {
-		dragCoefficient = value
-	})
-	scene.Add(dragInput)
-
-	for i, wind := range windSources {
-		windSpeedInput := createNumericInput(wind.Speed, 100, 200+float32(i*50), func(value float32) {
-			windSources[i].Speed = value
+		tempInput := gui.NewEdit(60, fmt.Sprintf("%.1f", (*windSources)[i].Temperature))
+		tempInput.SetPosition(80, y)
+		tempInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
+			if val, err := strconv.ParseFloat(tempInput.Text(), 32); err == nil {
+				(*windSources)[i].Temperature = float32(val)
+			}
 		})
-		scene.Add(windSpeedInput)
+		panel.Add(tempInput)
+		y += 25
+
+		// Direction controls
+		dirLabel := gui.NewLabel("Direction:")
+		dirLabel.SetPosition(20, y)
+		panel.Add(dirLabel)
+		y += 25
+
+		// X direction
+		xInput := gui.NewEdit(40, fmt.Sprintf("%.1f", (*windSources)[i].Direction.X))
+		xInput.SetPosition(30, y)
+		panel.Add(xInput)
+
+		// Y direction
+		yInput := gui.NewEdit(40, fmt.Sprintf("%.1f", (*windSources)[i].Direction.Y))
+		yInput.SetPosition(80, y)
+		panel.Add(yInput)
+
+		// Z direction
+		zInput := gui.NewEdit(40, fmt.Sprintf("%.1f", (*windSources)[i].Direction.Z))
+		zInput.SetPosition(130, y)
+		panel.Add(zInput)
+
+		// Update direction handler
+		updateDirFunc := func() {
+			x, _ := strconv.ParseFloat(xInput.Text(), 32)
+			y, _ := strconv.ParseFloat(yInput.Text(), 32)
+			z, _ := strconv.ParseFloat(zInput.Text(), 32)
+			dir := math32.NewVector3(float32(x), float32(y), float32(z))
+			if dir.Length() > 0 {
+				dir.Normalize()
+				(*windSources)[i].Direction = *dir
+			}
+		}
+
+		xInput.Subscribe(gui.OnChange, func(name string, ev interface{}) { updateDirFunc() })
+		yInput.Subscribe(gui.OnChange, func(name string, ev interface{}) { updateDirFunc() })
+		zInput.Subscribe(gui.OnChange, func(name string, ev interface{}) { updateDirFunc() })
+
+		y += 40
 	}
 }
 
@@ -232,41 +221,10 @@ func createNumericInput(defaultValue float32, x, y float32, onChange func(value 
 
 	textInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
 		text := textInput.Text()
-		filteredText := filterNumericInput(text)
-		if text != filteredText {
-			textInput.SetText(filteredText)
-		}
-	})
-
-	textInput.Subscribe(gui.OnKeyDown, func(name string, ev interface{}) {
-		kev := ev.(*window.KeyEvent)
-		if kev.Key == window.KeyEnter {
-			text := textInput.Text()
-			if value, err := strconv.ParseFloat(text, 32); err == nil && value > 0 {
-				onChange(float32(value))
-			} else {
-				textInput.SetText(fmt.Sprintf("%.2f", defaultValue))
-			}
+		if value, err := strconv.ParseFloat(text, 32); err == nil {
+			onChange(float32(value))
 		}
 	})
 
 	return textInput
-}
-
-func filterNumericInput(input string) string {
-	var builder strings.Builder
-	dotCount := 0
-
-	for i, char := range input {
-		if char >= '0' && char <= '9' {
-			builder.WriteRune(char)
-		} else if char == '.' && dotCount == 0 {
-			builder.WriteRune(char)
-			dotCount++
-		} else if char == '-' && i == 0 {
-			builder.WriteRune(char)
-		}
-	}
-
-	return builder.String()
 }

@@ -22,7 +22,7 @@ type ModelLoader struct {
 	models []*core.Node
 }
 
-func openFileDialog() (string, error) {
+func openModelFileDialog() (string, error) {
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {
@@ -87,7 +87,7 @@ func (ml *ModelLoader) LoadModel(fpath string) error {
 			log.Println("GLTF Scene undefined, check the file.")
 			return fmt.Errorf("no scene defined in GLTF file")
 		}
-	
+
 	case ".dae":
 		dec, err := collada.Decode(fpath)
 		if err != nil && err != io.EOF {
@@ -102,6 +102,13 @@ func (ml *ModelLoader) LoadModel(fpath string) error {
 		ml.models = append(ml.models, s.GetNode())
 	default:
 		return fmt.Errorf("unknown model format: %s", ext)
+	}
+	return nil
+}
+
+func (ml *ModelLoader) GetLoadedModel() *core.Node {
+	if len(ml.models) > 0 {
+		return ml.models[0] // Return the first loaded model
 	}
 	return nil
 }

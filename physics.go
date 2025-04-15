@@ -1,74 +1,103 @@
 package main
 
 import (
+	"math/rand"
+
 	"github.com/g3n/engine/core"
 	"github.com/g3n/engine/math32"
 )
 
-var velocity = math32.NewVector3(0, 0, 0)
-var dragCoefficient float32 = 0.47
+const (
+	airDensity       = 1.225
+	dragCoefficient  = 0.47
+	area             = 1.0
+	gravity          = -9.8
+	buoyancyFactor   = 0.1
+	turbulenceFactor = 0.5
+	thermalDiffusion = 0.02
+)
 
-const airDensity = 1.225
-const area = 1.0
-
-var mass float32 = 1.0
-
-const gravity = -9.8
-
-func updatePhysics(particle *WindParticle, object *core.Node, objectVelocity *math32.Vector3, objectMass float32, deltaTime float32) {
-	if particle == nil || object == nil || !particle.Alive {
+func updatePhysics(particle *WindParticle, object *core.Node, deltaTime float32) {
+	if particle == nil || !particle.Alive {
 		return
 	}
 
-	// Apply gravity to the particle
+	// Apply gravity
 	gravityForce := math32.NewVector3(0, gravity*particle.Mass, 0)
-	particle.Velocity.Add(gravityForce.MultiplyScalar(deltaTime))
 
-	// Calculate drag force
-	velocityMagnitude := particle.Velocity.Length()
-	dragForce := particle.Velocity.Clone().Normalize().MultiplyScalar(
-		-0.5 * airDensity * dragCoefficient * area * velocityMagnitude * velocityMagnitude,
+	// Apply buoyancy based on temperature difference
+	temperatureDiff := particle.Temperature - 20.0
+	buoyancyForce := math32.NewVector3(0, temperatureDiff*buoyancyFactor, 0)
+
+	// Apply turbulence
+	turbulence := math32.NewVector3(
+		(rand.Float32()-0.5)*turbulenceFactor*particle.Turbulence,
+		(rand.Float32()-0.5)*turbulenceFactor*particle.Turbulence,
+		(rand.Float32()-0.5)*turbulenceFactor*particle.Turbulence,
 	)
-	particle.Velocity.Add(dragForce.MultiplyScalar(deltaTime))
 
-	// Update particle position
-	particle.Position.Add(particle.Velocity.Clone().MultiplyScalar(deltaTime))
+	// Calculate total force
+	totalForce := gravityForce.Add(buoyancyForce).Add(turbulence)
+
+	// Apply drag force
+	velocity := particle.Velocity.Length()
+	dragForce := particle.Velocity.Clone().Normalize().MultiplyScalar(
+		-0.5 * airDensity * dragCoefficient * area * velocity * velocity,
+	)
+	totalForce.Add(dragForce)
+
+	// Update velocity using forces
+	acceleration := totalForce.MultiplyScalar(1.0 / particle.Mass)
+	particle.Velocity.Add(acceleration.MultiplyScalar(deltaTime))
+
+	// Temperature diffusion
+	particle.Temperature += (20.0 - particle.Temperature) * thermalDiffusion * deltaTime
+
+	// Update position
+	movement := particle.Velocity.Clone().MultiplyScalar(deltaTime)
+	particle.Position.Add(movement)
 	particle.Mesh.SetPositionVec(particle.Position)
 
-	// Check interaction with the object
-	objectPos := object.Position()
-	distanceVec := objectPos.Sub(particle.Position)
-	distance := distanceVec.Length()
-	influenceRadius := float32(3.0)
-	if distance > influenceRadius {
-		return
+	// Update particle orientation to match velocity direction
+	if particle.Velocity.Length() > 0.01 {
+		direction := particle.Velocity.Clone().Normalize()
+		yaw := math32.Atan2(direction.Z, direction.X)
+		pitch := math32.Asin(direction.Y / direction.Length())
+		particle.Mesh.SetRotation(pitch, yaw, 0)
 	}
 
-	// Strength of force decreases with distance (e.g., inverse-square)
-	strength := 1.0 / (1.0 + distance*distance)
-
-	// Force = wind's momentum scaled by proximity
-	force := particle.Velocity.Clone().MultiplyScalar(particle.Mass * strength)
-
-	// Apply to object's velocity
-	acceleration := force.DivideScalar(objectMass)
-	objectVelocity.Add(acceleration)
-
-	// Handle collision with the object
-	objectBounds := object.BoundingBox()
-	if !objectBounds.Min.Equals(&objectBounds.Max) {
+	// Handle collision with objects
+	if object != nil {
+		objectBounds := object.BoundingBox()
 		center := math32.NewVector3(0, 0, 0)
-		objectBounds.Center(center)
 		size := math32.NewVector3(0, 0, 0)
-		objectBounds.Size(size)
-		halfExtents := size.MultiplyScalar(0.5)
-		center.Add(&objectPos)
 
-		if math32.Abs(particle.Position.X-center.X) < halfExtents.X &&
-			math32.Abs(particle.Position.Y-center.Y) < halfExtents.Y &&
-			math32.Abs(particle.Position.Z-center.Z) < halfExtents.Z {
-			normal := center.Sub(particle.Position).Normalize()
-			particle.Velocity.Reflect(normal).MultiplyScalar(0.7) // Bounce with reduced speed
+		// Check if box has valid dimensions by checking if min != max
+		if !objectBounds.Min.Equals(&objectBounds.Max) {
+			objectBounds.Center(center)
+			objectBounds.Size(size)
+			halfExtents := size.MultiplyScalar(0.5)
+			objectPos := object.Position()
+			center.Add(&objectPos) // Convert Position() to pointer by taking address
+
+			// Check for collision
+			if math32.Abs(particle.Position.X-center.X) < halfExtents.X &&
+				math32.Abs(particle.Position.Y-center.Y) < halfExtents.Y &&
+				math32.Abs(particle.Position.Z-center.Z) < halfExtents.Z {
+
+				// Calculate collision normal
+				normal := particle.Position.Clone().Sub(center).Normalize()
+
+				// Reflect velocity with energy loss
+				particle.Velocity.Reflect(normal).MultiplyScalar(0.7)
+
+				// Move particle out of collision
+				escapeVector := normal.MultiplyScalar(0.1)
+				particle.Position.Add(escapeVector)
+
+				// Add some turbulence after collision
+				particle.Turbulence += 0.2
+			}
 		}
 	}
 }

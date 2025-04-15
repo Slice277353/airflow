@@ -12,27 +12,33 @@ import (
 )
 
 type WindSource struct {
-	Position  math32.Vector3
-	Radius    float32
-	Speed     float32
-	Direction math32.Vector3
-	Node      *graphic.Mesh
+	Position    math32.Vector3
+	Radius      float32
+	Speed       float32
+	Direction   math32.Vector3
+	Node        *graphic.Mesh
+	Spread      float32
+	Temperature float32
 }
 
 type WindParticle struct {
-	Mesh     *graphic.Mesh
-	Velocity math32.Vector3
-	Position *math32.Vector3
-	Lifespan float32
-	Elapsed  float32
+	Mesh        *graphic.Mesh
+	Velocity    math32.Vector3
+	Position    *math32.Vector3
+	Mass        float32
+	Lifespan    float32
+	Elapsed     float32
+	Alive       bool
+	Temperature float32
+	Turbulence  float32
 }
 
 var windParticles []*WindParticle
 
 func initializeWindSources(scene *core.Node) []WindSource {
 	windSources := []WindSource{
-		{Position: *math32.NewVector3(5, 2, 5), Radius: 3.0, Speed: 8.0, Direction: *math32.NewVector3(-1, 0, -1).Normalize()}, // Diagonal wind
-		{Position: *math32.NewVector3(-5, 2, -5), Radius: 2.0, Speed: 6.0, Direction: *math32.NewVector3(1, 0, 1).Normalize()}, // Opposite diagonal
+		{Position: *math32.NewVector3(5, 2, 5), Radius: 3.0, Speed: 8.0, Direction: *math32.NewVector3(-1, 0, -1).Normalize(), Spread: 0.2, Temperature: 25.0}, // Diagonal wind
+		{Position: *math32.NewVector3(-5, 2, -5), Radius: 2.0, Speed: 6.0, Direction: *math32.NewVector3(1, 0, 1).Normalize(), Spread: 0.3, Temperature: 20.0}, // Opposite diagonal
 	}
 
 	for i := range windSources {
@@ -43,17 +49,19 @@ func initializeWindSources(scene *core.Node) []WindSource {
 		sphereMesh.SetPositionVec(&windSources[i].Position)
 		windSources[i].Node = sphereMesh // Store the mesh in the WindSource struct
 		scene.Add(sphereMesh)
-	} // a few changes in here as well
+	}
 
 	return windSources
 }
 
-func addWindSource(windSource []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
+func addWindSource(windSources []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
 	newWind := WindSource{
-		Position:  position,
-		Radius:    2.0,
-		Speed:     5.0,
-		Direction: *math32.NewVector3(1, 0, 0).Normalize(),
+		Position:    position,
+		Radius:      2.0,
+		Speed:       5.0,
+		Direction:   *math32.NewVector3(1, 0, 0).Normalize(),
+		Spread:      0.2,
+		Temperature: 22.0,
 	}
 
 	sphereGeom := geometry.NewSphere(0.2, 16, 16)
@@ -63,64 +71,77 @@ func addWindSource(windSource []WindSource, scene *core.Node, position math32.Ve
 	newWind.Node = sphereMesh
 	scene.Add(sphereMesh)
 
-	return append(windSource, newWind)
+	return append(windSources, newWind)
 }
 
-func createWindParticle(position, direction math32.Vector3) *WindParticle {
-	// Create a thin cylinder to represent wind direction
-	particleGeom := geometry.NewCylinder(0.05, 0.5, 8, 1, true, true) // Use integer values for segments
-	particleMat := material.NewStandard(math32.NewColor("Cyan"))      // Bright color for visibility
-	particleMesh := graphic.NewMesh(particleGeom, particleMat)        // Use NewMesh instead of MeshFromGeometry
+func createWindParticle(scene *core.Node, position, direction math32.Vector3, speed float32) *WindParticle {
+	// Add random spread to the direction
+	spreadFactor := float32(0.2)
+	randomDir := math32.NewVector3(
+		(rand.Float32()-0.5)*spreadFactor,
+		(rand.Float32()-0.5)*spreadFactor,
+		(rand.Float32()-0.5)*spreadFactor,
+	)
+	newDir := *direction.Clone().Add(randomDir).Normalize()
 
-	// Position the particle
-	particleMesh.SetPosition(position.X, position.Y, position.Z)
+	// Create visual representation
+	particleGeom := geometry.NewCylinder(0.05, 0.2, 8, 1, true, true) // Smaller, more arrow-like particles
+	particleMat := material.NewStandard(math32.NewColor("Cyan"))
+	particleMat.SetOpacity(0.7)
+	particleMat.SetTransparent(true)
+	particleMesh := graphic.NewMesh(particleGeom, particleMat)
 
-	// Calculate rotation angles directly
-	yaw := math32.Atan2(direction.Z, direction.X)          // Rotation around Y-axis
-	pitch := math32.Asin(direction.Y / direction.Length()) // Rotation around X-axis
+	// Set initial position
+	particleMesh.SetPositionVec(&position)
 
-	// Apply the rotation
+	// Orient particle in direction of movement
+	yaw := math32.Atan2(newDir.Z, newDir.X)
+	pitch := math32.Asin(newDir.Y)
 	particleMesh.SetRotation(pitch, yaw, 0)
 
-	log.Printf("Adding wind particle at position: %v, Direction: %v", position, direction)
 	scene.Add(particleMesh)
 
 	return &WindParticle{
-		Mesh:     particleMesh,
-		Velocity: *direction.Clone().MultiplyScalar(2.0), // Increase speed for visibility
-		Lifespan: 5.0,
-		Elapsed:  0,
+		Mesh:        particleMesh,
+		Velocity:    *newDir.MultiplyScalar(speed),
+		Position:    position.Clone(),
+		Mass:        1.0,
+		Lifespan:    5.0,
+		Elapsed:     0,
+		Alive:       true,
+		Temperature: 20.0,
+		Turbulence:  rand.Float32() * 0.3,
 	}
 }
 
 func updateWindParticles(deltaTime float32, scene *core.Node, mesh *core.Node) {
-	var newParticles []*WindParticle
-	log.Printf("Processing %d wind particles", len(windParticles))
+	var activeParticles []*WindParticle
 
 	for _, particle := range windParticles {
+		if particle == nil || !particle.Alive {
+			continue
+		}
+
 		particle.Elapsed += deltaTime
 		if particle.Elapsed >= particle.Lifespan {
-			log.Printf("Removing particle at position: %v", particle.Mesh.Position())
 			scene.Remove(particle.Mesh)
 			continue
 		}
 
-		// Update physics for the particle
-		if mesh != nil {
-			updatePhysics(particle, mesh, velocity, mass, deltaTime)
-		}
+		// Update physics
+		updatePhysics(particle, mesh, deltaTime)
 
-		// Keep particle in scene bounds (optional)
+		// Remove particles that are too far from the scene
 		if particle.Position.Length() > 20 {
-			log.Printf("Particle out of bounds at: %v", particle.Position)
 			scene.Remove(particle.Mesh)
 			continue
 		}
 
-		newParticles = append(newParticles, particle)
+		// Keep active particles
+		activeParticles = append(activeParticles, particle)
 	}
 
-	windParticles = newParticles
+	windParticles = activeParticles
 }
 
 type VectorField struct {
@@ -321,6 +342,11 @@ func initializeFluidSimulation(scene *core.Node, windSources []WindSource) {
 }
 
 func simulateFluid(deltaTime float32) {
+	if mesh != nil {
+		updateWindParticles(deltaTime, scene, mesh)
+	} else {
+		updateWindParticles(deltaTime, scene, nil)
+	}
 	updateParticles(deltaTime)
 	updateVectorField()
 	drawParticles()
