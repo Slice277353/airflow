@@ -70,9 +70,6 @@ func main() {
 
 	a.Gls().ClearColor(0.5, 0.5, 0.5, 1.0)
 
-	// Initialize the UI
-	initializeUI(scene, windSources, ml, cam)
-
 	// Application loop
 	lastParticleTime := time.Now()
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
