@@ -216,54 +216,43 @@ func initVectorField(width, height, depth, areaWidth, areaHeight, areaDepth int)
 	}
 }
 
-func initParticles(count int, windSources []WindSource, scene *core.Node) []Particle {
+func initParticles(count int, scene *core.Node) []Particle {
 	particles := make([]Particle, count)
-	sourceCount := len(windSources)
 
-	for i := 0; i < count; i++ {
-		// Distribute particles evenly across wind sources
-		wind := windSources[i%sourceCount]
+	// Calculate grid dimensions for even distribution
+	gridSize := int(math32.Pow(float32(count), 1.0/3.0))
+	spacing := float32(20.0) / float32(gridSize)
 
-		// Spawn particle near the wind source within its radius in 3D space
-		offset := math32.NewVector3(
-			(rand.Float32()-0.5)*2*wind.Radius, // X offset within the radius
-			(rand.Float32()-0.5)*2*wind.Radius, // Y offset within the radius
-			(rand.Float32()-0.5)*2*wind.Radius, // Z offset within the radius
-		)
+	index := 0
+	// Create an evenly spaced grid of particles
+	for x := 0; x < gridSize && index < count; x++ {
+		for y := 0; y < gridSize && index < count; y++ {
+			for z := 0; z < gridSize && index < count; z++ {
+				// Calculate position in world space
+				position := math32.NewVector3(
+					float32(x)*spacing-10.0, // Range [-10, 10]
+					float32(y)*spacing/4,    // Range [0, 5]
+					float32(z)*spacing-10.0, // Range [-10, 10]
+				)
 
-		// Ensure the offset is within the spherical radius
-		if offset.Length() > wind.Radius {
-			offset.Normalize().MultiplyScalar(wind.Radius)
-		}
+				// Create visualization
+				sphereGeom := geometry.NewSphere(0.1, 8, 8)
+				sphereMat := material.NewStandard(math32.NewColor("Blue"))
+				sphereMesh := graphic.NewMesh(sphereGeom, sphereMat)
+				sphereMesh.SetPosition(position.X, position.Y, position.Z)
+				scene.Add(sphereMesh)
 
-		position := wind.Position.Clone().Add(offset)
-
-		// Create a small sphere for visualization
-		sphereGeom := geometry.NewSphere(0.1, 8, 8)
-		sphereMat := material.NewStandard(math32.NewColor("Blue"))
-		sphereMesh := graphic.NewMesh(sphereGeom, sphereMat)
-
-		// Correct positioning using SetPosition instead of SetPositionVec
-		sphereMesh.SetPosition(position.X, position.Y, position.Z)
-		scene.Add(sphereMesh)
-
-		// Initialize particle velocity based on wind direction with some randomness
-		velocity := wind.Direction.Clone().MultiplyScalar(wind.Speed).Add(
-			math32.NewVector3(
-				(rand.Float32()-0.5)*0.5,
-				(rand.Float32()-0.5)*0.5, // Added Y velocity
-				(rand.Float32()-0.5)*0.5,
-			),
-		)
-
-		particles[i] = Particle{
-			X:    position.X,
-			Y:    position.Y,
-			Z:    position.Z,
-			VX:   velocity.X,
-			VY:   velocity.Y,
-			VZ:   velocity.Z,
-			Mesh: sphereMesh,
+				particles[index] = Particle{
+					X:    position.X,
+					Y:    position.Y,
+					Z:    position.Z,
+					VX:   0,
+					VY:   0,
+					VZ:   0,
+					Mesh: sphereMesh,
+				}
+				index++
+			}
 		}
 	}
 	return particles
@@ -273,31 +262,43 @@ func updateParticles(deltaTime float32) {
 	for i := range fluidParticles {
 		p := &fluidParticles[i]
 
-		// Random turbulence
+		// Get vector field influence
+		gridX := int((p.X + 10.0) * float32(vectorField.AreaWidth) / 20.0)
+		gridY := int(p.Y * float32(vectorField.AreaHeight) / 5.0)
+		gridZ := int((p.Z + 10.0) * float32(vectorField.AreaDepth) / 20.0)
+
+		// Ensure grid coordinates are in bounds
+		gridX = int(clamp(float32(gridX), 0, float32(vectorField.AreaWidth-1)))
+		gridY = int(clamp(float32(gridY), 0, float32(vectorField.AreaHeight-1)))
+		gridZ = int(clamp(float32(gridZ), 0, float32(vectorField.AreaDepth-1)))
+
+		// Apply vector field velocity
+		v := vectorField.Field[gridX][gridY][gridZ]
+		p.VX += v.VX * deltaTime
+		p.VY += v.VY * deltaTime
+		p.VZ += v.VZ * deltaTime
+
+		// Add slight turbulence
 		p.VX += (rand.Float32() - 0.5) * 0.1
 		p.VY += (rand.Float32() - 0.5) * 0.1
 		p.VZ += (rand.Float32() - 0.5) * 0.1
 
-		// Friction
-		p.VX *= 0.9
-		p.VY *= 0.9
-		p.VZ *= 0.9
+		// Apply drag
+		p.VX *= 0.99
+		p.VY *= 0.99
+		p.VZ *= 0.99
 
 		// Update position
-		p.OX = p.X
-		p.OY = p.Y
-		p.OZ = p.Z
 		p.X += p.VX * deltaTime
 		p.Y += p.VY * deltaTime
 		p.Z += p.VZ * deltaTime
 
-		// Constrain to a reasonable area
-		const maxX, maxY, maxZ = 10.0, 5.0, 10.0
-		p.X = clamp(p.X, -maxX, maxX)
-		p.Y = clamp(p.Y, 0.1, maxY) // Keep above ground, but with upper limit
-		p.Z = clamp(p.Z, -maxZ, maxZ)
+		// Constrain to bounds
+		p.X = clamp(p.X, -10, 10)
+		p.Y = clamp(p.Y, 0.1, 4.9)
+		p.Z = clamp(p.Z, -10, 10)
 
-		// Update the sphere's position
+		// Update visual representation
 		if p.Mesh != nil {
 			p.Mesh.SetPosition(p.X, p.Y, p.Z)
 		}
@@ -337,8 +338,8 @@ func drawParticles() {
 }
 
 func initializeFluidSimulation(scene *core.Node, windSources []WindSource) {
-	vectorField = initVectorField(20, 20, 20, 10, 10, 10)   // Adjusted dimensions for better visualization
-	fluidParticles = initParticles(250, windSources, scene) // Reduced particle count for clarity
+	vectorField = initVectorField(20, 5, 20, 10, 5, 10) // World dimensions with resolution
+	fluidParticles = initParticles(1000, scene)         // Create 1000 particles in a grid
 }
 
 func simulateFluid(deltaTime float32) {

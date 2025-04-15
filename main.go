@@ -58,6 +58,10 @@ func main() {
 	windSources := initializeWindSources(scene)
 	initializeUI(scene, &windSources, ml, cam)
 
+
+	// Initialize global fluid simulation with wind sources
+	initializeFluidSimulation(scene, windSources)
+
 	// Lights and helpers
 	scene.Add(light.NewAmbient(&math32.Color{R: 1.0, G: 1.0, B: 1.0}, 0.8))
 	pointLight := light.NewPoint(&math32.Color{R: 1, G: 1, B: 1}, 5.0)
@@ -68,23 +72,11 @@ func main() {
 	a.Gls().ClearColor(0.5, 0.5, 0.5, 1.0)
 
 	// Application loop
-	lastParticleTime := time.Now()
 	a.Run(func(renderer *renderer.Renderer, deltaTime time.Duration) {
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
 
 		if windEnabled {
-			// Spawn particles from each wind source periodically
-			if time.Since(lastParticleTime).Milliseconds() >= 100 { // Spawn every 100ms
-				for _, source := range windSources {
-					particle := createWindParticle(scene, source.Position, source.Direction, source.Speed)
-					if particle != nil {
-						windParticles = append(windParticles, particle)
-					}
-				}
-				lastParticleTime = time.Now()
-			}
-
-			// Update all particles
+			// Use the existing simulateFluid function
 			simulateFluid(float32(deltaTime.Seconds()))
 		}
 
