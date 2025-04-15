@@ -73,6 +73,7 @@ func main() {
 			lastParticleTime = time.Now()
 		}
 
+
 		// Update wind particles
 		importedModel := ml.GetLoadedModel()
 		for _, particle := range windParticles {

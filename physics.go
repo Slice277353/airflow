@@ -17,6 +17,7 @@ func updatePhysics(particle *WindParticle, object *core.Node, deltaTime float32)
 		return
 	}
 
+<<<<<<< HEAD
 
 	// Apply gravity
 	gravityForce := math32.NewVector3(0, gravity*particle.Mass, 0)
@@ -32,4 +33,26 @@ func updatePhysics(particle *WindParticle, object *core.Node, deltaTime float32)
 	// Update position
 	particle.Position.Add(particle.Velocity.Clone().MultiplyScalar(deltaTime))
 	particle.Mesh.SetPositionVec(particle.Position)
+=======
+	objectPos := object.Position()                  // this returns a Vector3 (by value)
+	distanceVec := objectPos.Sub(particle.Position) // Vector3.Sub() returns *Vector3
+	distance := distanceVec.Length()
+	influenceRadius := float32(3.0)
+	if distance > influenceRadius {
+		return
+	}
+
+	// Strength of force decreases with distance (e.g., inverse-square)
+	strength := 1.0 / (1.0 + distance*distance)
+
+	// Force = wind's momentum scaled by proximity
+	force := particle.Velocity.Clone().MultiplyScalar(particle.Mass * strength)
+
+	// Apply to object's velocity
+	acceleration := force.DivideScalar(objectMass)
+	objectVelocity.Add(acceleration)
+
+	// Optional: particle dies after pushing
+	// particle.Alive = false
+>>>>>>> parent of c0edab8 (prototype)
 }
