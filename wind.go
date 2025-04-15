@@ -35,8 +35,13 @@ type WindParticle struct {
 
 var windParticles []*WindParticle
 
-func initializeWindSources(scene *core.Node) []WindSource {
-	windSources := []WindSource{
+var (
+	windSources []WindSource
+)
+
+func initializeWindSources(scn *core.Node) []WindSource {
+	scene = scn // Store scene globally
+	windSources = []WindSource{
 		{Position: *math32.NewVector3(5, 2, 5), Radius: 3.0, Speed: 8.0, Direction: *math32.NewVector3(-1, 0, -1).Normalize(), Spread: 0.2, Temperature: 25.0}, // Diagonal wind
 		{Position: *math32.NewVector3(-5, 2, -5), Radius: 2.0, Speed: 6.0, Direction: *math32.NewVector3(1, 0, 1).Normalize(), Spread: 0.3, Temperature: 20.0}, // Opposite diagonal
 	}
@@ -54,7 +59,7 @@ func initializeWindSources(scene *core.Node) []WindSource {
 	return windSources
 }
 
-func addWindSource(windSources []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
+func addWindSource(sources []WindSource, scn *core.Node, position math32.Vector3) []WindSource {
 	newWind := WindSource{
 		Position:    position,
 		Radius:      2.0,
@@ -71,7 +76,8 @@ func addWindSource(windSources []WindSource, scene *core.Node, position math32.V
 	newWind.Node = sphereMesh
 	scene.Add(sphereMesh)
 
-	return append(windSources, newWind)
+	windSources = append(sources, newWind) // Update global windSources
+	return windSources
 }
 
 func createWindParticle(scene *core.Node, position, direction math32.Vector3, speed float32) *WindParticle {
@@ -143,6 +149,34 @@ func updateWindParticles(deltaTime float32, scene *core.Node, mesh *core.Node) {
 
 	windParticles = activeParticles
 }
+
+func calculateWindInfluence(particle *WindParticle, source *WindSource) (math32.Vector3, float32) {
+	particlePos := math32.NewVector3(particle.Position.X, particle.Position.Y, particle.Position.Z)
+	toParticle := *particlePos.Sub(&source.Position)
+	distance := toParticle.Length()
+
+	if distance > source.Radius {
+		return *math32.NewVector3(0, 0, 0), 0
+	}
+
+	// Calculate influence based on distance (closer = stronger)
+	influence := 1.0 - (distance / source.Radius)
+
+	// Temperature affects vertical movement
+	tempDiff := source.Temperature - particle.Temperature
+	verticalForce := tempDiff * 0.01 // Adjust this multiplier as needed
+
+	// Combine direction with temperature-based vertical movement
+	windDir := source.Direction.Clone()
+	windDir.Y += verticalForce
+	windDir.Normalize()
+
+	// Scale by source speed and influence
+	return *windDir.MultiplyScalar(source.Speed * influence), influence
+}
+
+// Removed duplicate updatePhysics function to resolve redeclaration error.
+// The implementation is assumed to exist in physics.go.
 
 type VectorField struct {
 	Width      int
@@ -337,12 +371,15 @@ func drawParticles() {
 	}
 }
 
-func initializeFluidSimulation(scene *core.Node, windSources []WindSource) {
+func initializeFluidSimulation(scn *core.Node, sources []WindSource) {
+	scene = scn
+	windSources = sources
 	vectorField = initVectorField(20, 5, 20, 10, 5, 10) // World dimensions with resolution
 	fluidParticles = initParticles(1000, scene)         // Create 1000 particles in a grid
 }
 
-func simulateFluid(deltaTime float32) {
+func simulateFluid(deltaTime float32, obstMesh *core.Node) {
+	mesh = obstMesh // Update global mesh reference
 	if mesh != nil {
 		updateWindParticles(deltaTime, scene, mesh)
 	} else {

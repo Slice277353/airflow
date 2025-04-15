@@ -77,7 +77,7 @@ func main() {
 
 		if windEnabled {
 			// Use the existing simulateFluid function
-			simulateFluid(float32(deltaTime.Seconds()))
+			simulateFluid(float32(deltaTime.Seconds()), scene)
 		}
 
 		renderer.Render(scene, cam)
