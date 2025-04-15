@@ -17,6 +17,7 @@ func updatePhysics(particle *WindParticle, object *core.Node, deltaTime float32)
 		return
 	}
 
+
 	// Apply gravity
 	gravityForce := math32.NewVector3(0, gravity*particle.Mass, 0)
 	particle.Velocity.Add(gravityForce.MultiplyScalar(deltaTime))
