@@ -22,7 +22,6 @@ type WindParticle struct {
 	Mass     float32
 	Lifespan float32
 	Elapsed  float32
-	Alive    bool
 }
 
 func initializeWindSources(scene *core.Node) []WindSource {
