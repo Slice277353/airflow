@@ -58,10 +58,6 @@ func main() {
 	windSources := initializeWindSources(scene)
 	initializeUI(scene, &windSources, ml, cam)
 
-
-	// Initialize global fluid simulation with wind sources
-	initializeFluidSimulation(scene, windSources)
-
 	// Lights and helpers
 	scene.Add(light.NewAmbient(&math32.Color{R: 1.0, G: 1.0, B: 1.0}, 0.8))
 	pointLight := light.NewPoint(&math32.Color{R: 1, G: 1, B: 1}, 5.0)

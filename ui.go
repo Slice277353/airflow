@@ -29,16 +29,18 @@ func initializeUI(scene *core.Node, windSources *[]WindSource, ml *ModelLoader, 
 		windEnabled = !windEnabled
 		if windEnabled {
 			btn.Label.SetText("Wind ON")
+			// Initialize the fluid simulation when wind is turned on
 			initializeFluidSimulation(scene, *windSources)
 		} else {
 			btn.Label.SetText("Wind OFF")
-			// Clean up existing particles
+			// Clean up everything when turned off
 			for _, p := range windParticles {
 				if p != nil && p.Mesh != nil {
 					scene.Remove(p.Mesh)
 				}
 			}
 			windParticles = nil
+			clearFluidParticles(scene)
 		}
 	})
 	panel.Add(btn)

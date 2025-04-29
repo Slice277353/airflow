@@ -389,3 +389,12 @@ func simulateFluid(deltaTime float32, obstMesh *core.Node) {
 	updateVectorField()
 	drawParticles()
 }
+
+func clearFluidParticles(scene *core.Node) {
+	for _, p := range fluidParticles {
+		if p.Mesh != nil {
+			scene.Remove(p.Mesh)
+		}
+	}
+	fluidParticles = nil
+}
