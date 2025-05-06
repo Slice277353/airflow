@@ -9,18 +9,11 @@ import (
 
 	localcam "github.com/g3n/demos/hellog3n/camera"
 	"github.com/g3n/engine/camera"
-	"github.com/g3n/engine/core"
 	"github.com/g3n/engine/gui"
 	"github.com/g3n/engine/window"
 )
 
-func initializeUI(scene *core.Node, windSources *[]WindSource, ml *ModelLoader, cam camera.ICamera) {
-	// Create a panel for controls
-	panel := gui.NewPanel(300, 400)
-	panel.SetPosition(10, 10)
-	panel.SetColor4(&math32.Color4{R: 0.2, G: 0.2, B: 0.2, A: 0.8})
-	scene.Add(panel)
-
+func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, cam camera.ICamera) {
 	// Toggle wind button
 	btn := gui.NewButton("Wind OFF")
 	btn.SetPosition(10, 10)
