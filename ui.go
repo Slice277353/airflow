@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 
 	"github.com/g3n/engine/math32"
@@ -19,6 +20,15 @@ import (
 var (
 	globalPlotsPanel *gui.Panel
 )
+
+// getPythonPath returns the appropriate Python interpreter path based on OS
+func getPythonPath() string {
+	if runtime.GOOS == "windows" {
+		return ".venv/Scripts/python"
+	}
+	// Linux, macOS, and other Unix-like systems
+	return ".venv/bin/python"
+}
 
 func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, cam camera.ICamera) {
 	// Create left control panel
@@ -73,7 +83,7 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 					log.Printf("Saved simulation data to: %s", filepath)
 
 					// Process with Python script using virtual environment
-					cmd := exec.Command(".venv/Scripts/python", "script.py", filepath)
+					cmd := exec.Command(getPythonPath(), "script.py", filepath)
 					output, err := cmd.CombinedOutput()
 					if err != nil {
 						log.Printf("Error running analysis script: %v\nOutput: %s", err, string(output))
@@ -234,7 +244,7 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 			log.Println("Error saving data:", err)
 		} else {
 			// Run Python script with the exported data using virtual environment
-			cmd := exec.Command(".venv/Scripts/python", "script.py", filepath)
+			cmd := exec.Command(getPythonPath(), "script.py", filepath)
 			if err := cmd.Run(); err != nil {
 				log.Println("Error running analysis script:", err)
 			}
