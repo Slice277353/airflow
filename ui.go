@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"strconv"
 
 	"github.com/g3n/engine/math32"
+	"github.com/g3n/engine/texture"
 
 	localcam "github.com/g3n/demos/hellog3n/camera"
 	"github.com/g3n/engine/camera"
@@ -13,20 +16,81 @@ import (
 	"github.com/g3n/engine/window"
 )
 
+var (
+	globalPlotsPanel *gui.Panel
+)
+
 func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, cam camera.ICamera) {
+	// Create left control panel
+	controlPanel = gui.NewPanel(300, 400)
+	controlPanel.SetPosition(10, 10)
+	controlPanel.SetColor4(&math32.Color4{R: 0.2, G: 0.2, B: 0.2, A: 0.8})
+	scene.Add(controlPanel)
+
+	// Create right panel for plots
+	plotsPanel := gui.NewPanel(450, 900) // Wide enough for plots and padding
+	plotsPanel.SetColor4(&math32.Color4{R: 0.2, G: 0.2, B: 0.2, A: 0.8})
+	plotsPanel.SetVisible(false) // Initially hidden
+	scene.Add(plotsPanel)
+
+	// Store plotsPanel in a package-level variable so we can access it from anywhere
+	globalPlotsPanel = plotsPanel
+
+	// Position right panel (will be updated when window is resized)
+	width, _ := window.Get().GetSize()
+	plotsPanel.SetPosition(float32(width)-plotsPanel.Width()-10, 10)
+
+	// Add analyze button (moved up before it's referenced)
+	analyzeBtn := gui.NewButton("Start Recording")
+	analyzeBtn.SetSize(120, 30)
+	analyzeBtn.SetPosition(140, 10)
+	analyzeBtn.SetEnabled(false) // Initially disabled
+	controlPanel.Add(analyzeBtn)
+
 	// Toggle wind button
 	btn := gui.NewButton("Wind OFF")
 	btn.SetPosition(10, 10)
 	btn.SetSize(80, 30)
+
+	// Wind button click handler
 	btn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		windEnabled = !windEnabled
-		if windEnabled {
+		if !windEnabled {
+			// Starting wind
+			windEnabled = true
 			btn.Label.SetText("Wind ON")
-			// Initialize the fluid simulation when wind is turned on
+			analyzeBtn.SetEnabled(true) // Enable recording while wind is running
 			initializeFluidSimulation(scene, *windSources)
 		} else {
+			// Stopping wind - save data if we were recording
+			if isRecording {
+				stopRecording()
+
+				// Save and process the data
+				filepath, err := saveSimulationData()
+				if err != nil {
+					log.Println("Error saving simulation data:", err)
+				} else {
+					log.Printf("Saved simulation data to: %s", filepath)
+
+					// Process with Python script using virtual environment
+					cmd := exec.Command(".venv/Scripts/python", "script.py", filepath)
+					output, err := cmd.CombinedOutput()
+					if err != nil {
+						log.Printf("Error running analysis script: %v\nOutput: %s", err, string(output))
+					} else {
+						log.Printf("Analysis complete: %s", string(output))
+
+						// Update plot display
+						updatePlots(plotsPanel, filepath)
+					}
+				}
+			}
+
+			// Clean up simulation
+			windEnabled = false
 			btn.Label.SetText("Wind OFF")
-			// Clean up everything when turned off
+			analyzeBtn.Label.SetText("Start Recording")
+			analyzeBtn.SetEnabled(false)
 			for _, p := range windParticles {
 				if p != nil && p.Mesh != nil {
 					scene.Remove(p.Mesh)
@@ -36,7 +100,25 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 			clearFluidParticles(scene)
 		}
 	})
-	panel.Add(btn)
+	controlPanel.Add(btn)
+
+	// Analyze (now Recording) button click handler
+	analyzeBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		if !windEnabled {
+			log.Println("Wind must be enabled to record simulation")
+			return
+		}
+
+		if !isRecording {
+			// Start recording
+			startRecording()
+			analyzeBtn.Label.SetText("Stop Recording")
+		} else {
+			// Stop recording but keep wind running
+			stopRecording()
+			analyzeBtn.Label.SetText("Start Recording")
+		}
+	})
 
 	// Import model button
 	importBtn := gui.NewButton("Import Model")
@@ -66,7 +148,7 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 			mesh.SetPosition(0, 1, 0)
 		}
 	})
-	panel.Add(importBtn)
+	controlPanel.Add(importBtn)
 
 	// Add wind source button with mouse placement
 	addWindBtn := gui.NewButton("Add Wind Source")
@@ -78,9 +160,9 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 			mev := ev.(*window.MouseEvent)
 
 			// Create a ray from the camera through the mouse position
-			width, height := window.Get().GetSize()
+			width, _ := window.Get().GetSize()
 			x := 2.0*float32(mev.Xpos)/float32(width) - 1.0
-			y := -2.0*float32(mev.Ypos)/float32(height) + 1.0
+			y := -2.0*float32(mev.Ypos)/float32(width) + 1.0
 
 			ray := localcam.NewRayFromMouse(cam, x, y)
 
@@ -105,7 +187,7 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 
 					// Add the wind source at the intersection point
 					*windSources = addWindSource(*windSources, scene, *intersectPoint)
-					updateWindControls(panel, windSources)
+					updateWindControls(controlPanel, windSources)
 				}
 			}
 
@@ -116,9 +198,51 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 		// Subscribe to mouse click with an ID for later removal
 		window.Get().SubscribeID(window.OnMouseDown, "wind_source_placement", mouseHandler)
 	})
-	panel.Add(addWindBtn)
+	controlPanel.Add(addWindBtn)
 
-	updateWindControls(panel, windSources)
+	// Start recording button
+	recordBtn := gui.NewButton("Start Recording")
+	recordBtn.SetSize(120, 30)
+	recordBtn.SetPosition(140, 50)
+	recordBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		if len(simulationHistory) == 0 {
+			recordBtn.Label.SetText("Stop Recording")
+			simulationHistory = make([]SimulationSnapshot, 0)
+			// Initialize first frame immediately
+			recordSimulationFrame()
+		} else {
+			recordBtn.Label.SetText("Start Recording")
+			// Save data when stopping
+			if len(simulationHistory) > 0 {
+				_, err := saveSimulationData()
+				if err != nil {
+					log.Println("Error saving simulation data:", err)
+				}
+				// Clear history after saving
+				simulationHistory = nil
+			}
+		}
+	})
+	controlPanel.Add(recordBtn)
+
+	// Export data button
+	exportBtn := gui.NewButton("Export Data")
+	exportBtn.SetSize(120, 30)
+	exportBtn.SetPosition(140, 90)
+	exportBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+		if filepath, err := saveSimulationData(); err != nil {
+			log.Println("Error saving data:", err)
+		} else {
+			// Run Python script with the exported data using virtual environment
+			cmd := exec.Command(".venv/Scripts/python", "script.py", filepath)
+			if err := cmd.Run(); err != nil {
+				log.Println("Error running analysis script:", err)
+			}
+		}
+	})
+	controlPanel.Add(exportBtn)
+
+	updateWindControls(controlPanel, windSources)
 }
 
 func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
@@ -222,4 +346,145 @@ func createNumericInput(defaultValue float32, x, y float32, onChange func(value 
 	})
 
 	return textInput
+}
+
+// Add this helper function to update plots
+func updatePlots(plotsPanel *gui.Panel, filepath string) {
+	// Define plot files
+	basePath := filepath[:len(filepath)-5]
+	plotFiles := map[string]string{
+		"velocity":   basePath + "_velocity.png",
+		"magnitude":  basePath + "_magnitude.png",
+		"trajectory": basePath + "_trajectory.png",
+		"position":   basePath + "_position.png",
+	}
+
+	// Check if all plot files exist
+	for plotType, plotPath := range plotFiles {
+		if _, err := os.Stat(plotPath); os.IsNotExist(err) {
+			log.Printf("%s plot file was not created at expected path: %s", plotType, plotPath)
+			return
+		}
+	}
+	log.Println("All plot files created successfully")
+
+	// Clear existing plots
+	for _, child := range plotsPanel.Children() {
+		if panel, ok := child.(gui.IPanel); ok {
+			plotsPanel.Remove(panel)
+		}
+	}
+
+	// Create and position plots
+	plotWidth := float32(400)
+	plotHeight := float32(200)
+	padding := float32(10)
+
+	// Define the order of plots (top to bottom)
+	plotOrder := []string{"velocity", "magnitude", "trajectory", "position"}
+
+	// Create and position each plot in order
+	for i, plotType := range plotOrder {
+		plotPath := plotFiles[plotType]
+
+		// Create container panel for each plot
+		container := gui.NewPanel(plotWidth, plotHeight)
+		container.SetPosition(padding, padding+float32(i)*(plotHeight+padding))
+		plotsPanel.Add(container)
+
+		// Create texture from image
+		tex, err := texture.NewTexture2DFromImage(plotPath)
+		if err != nil {
+			log.Printf("Error loading texture for %s: %v", plotType, err)
+			continue
+		}
+
+		// Create image with texture
+		img, err := gui.NewImage(plotPath)
+		if err != nil || img == nil {
+			log.Printf("Error creating image panel for %s: %v", plotType, err)
+			continue
+		}
+
+		img.SetTexture(tex)
+		img.SetSize(plotWidth, plotHeight)
+		container.Add(img)
+
+		// Add click handler for the container
+		container.Subscribe(gui.OnMouseDown, func(name string, ev interface{}) {
+			// Create full-screen overlay
+			width, height := window.Get().GetSize()
+			overlay := gui.NewPanel(float32(width), float32(height))
+			overlay.SetColor4(&math32.Color4{R: 0, G: 0, B: 0, A: 0.9})
+			overlay.SetPosition(0, 0)
+			scene.Add(overlay)
+
+			// Create larger version of the plot
+			largeImg, _ := gui.NewImage(plotPath)
+			largeTex, _ := texture.NewTexture2DFromImage(plotPath)
+			largeImg.SetTexture(largeTex)
+
+			// Calculate size to maintain aspect ratio
+			imgAspect := plotWidth / plotHeight
+			screenAspect := float32(width) / float32(height)
+			var imgWidth, imgHeight float32
+
+			if imgAspect > screenAspect {
+				imgWidth = float32(width) * 0.9
+				imgHeight = imgWidth / imgAspect
+			} else {
+				imgHeight = float32(height) * 0.9
+				imgWidth = imgHeight * imgAspect
+			}
+
+			largeImg.SetSize(imgWidth, imgHeight)
+			largeImg.SetPosition((float32(width)-imgWidth)/2, (float32(height)-imgHeight)/2)
+			overlay.Add(largeImg)
+
+			// Add close button
+			closeBtn := gui.NewButton("×")
+			closeBtn.SetSize(40, 40)
+			closeBtn.SetPosition(float32(width)-50, 10)
+			closeBtn.Label.SetFontSize(24)
+			closeBtn.Label.SetColor(&math32.Color{R: 1, G: 1, B: 1})
+			closeBtn.SetColor(&math32.Color{R: 0.5, G: 0, B: 0})
+			overlay.Add(closeBtn)
+
+			closeBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
+				scene.Remove(overlay)
+			})
+
+			// Track whether we're clicking on the image
+			var clickedOnImage bool
+
+			largeImg.Subscribe(gui.OnMouseDown, func(name string, ev interface{}) {
+				clickedOnImage = true
+			})
+
+			largeImg.Subscribe(gui.OnMouseUp, func(name string, ev interface{}) {
+				clickedOnImage = false
+			})
+
+			// Close on background click
+			overlay.Subscribe(gui.OnMouseDown, func(name string, ev interface{}) {
+				if !clickedOnImage && ev.(*window.MouseEvent).Button == window.MouseButtonLeft {
+					scene.Remove(overlay)
+				}
+			})
+		})
+
+		// Add hover effect
+		container.Subscribe(gui.OnCursor, func(name string, ev interface{}) {
+			container.SetColor4(&math32.Color4{R: 1, G: 1, B: 1, A: 0.1})
+		})
+		container.Subscribe(gui.OnCursorLeave, func(name string, ev interface{}) {
+			container.SetColor4(&math32.Color4{R: 0, G: 0, B: 0, A: 0})
+		})
+
+		log.Printf("Added %s plot at position (%.0f, %.0f)",
+			plotType, padding, padding+float32(i)*(plotHeight+padding))
+	}
+
+	// Show the plots panel
+	plotsPanel.SetVisible(true)
 }

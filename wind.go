@@ -81,8 +81,8 @@ func addWindSource(sources []WindSource, scn *core.Node, position math32.Vector3
 }
 
 func createWindParticle(scene *core.Node, position, direction math32.Vector3, speed float32) *WindParticle {
-	// Add random spread to the direction
-	spreadFactor := float32(0.2)
+	// Add minimal spread to ensure trackable paths
+	spreadFactor := float32(0.05)
 	randomDir := math32.NewVector3(
 		(rand.Float32()-0.5)*spreadFactor,
 		(rand.Float32()-0.5)*spreadFactor,
@@ -91,14 +91,20 @@ func createWindParticle(scene *core.Node, position, direction math32.Vector3, sp
 	newDir := *direction.Clone().Add(randomDir).Normalize()
 
 	// Create visual representation
-	particleGeom := geometry.NewCylinder(0.05, 0.2, 8, 1, true, true) // Smaller, more arrow-like particles
+	particleGeom := geometry.NewCylinder(0.05, 0.2, 8, 1, true, true)
 	particleMat := material.NewStandard(math32.NewColor("Cyan"))
 	particleMat.SetOpacity(0.7)
 	particleMat.SetTransparent(true)
 	particleMesh := graphic.NewMesh(particleGeom, particleMat)
 
-	// Set initial position
-	particleMesh.SetPositionVec(&position)
+	// Set initial position with minimal random offset
+	randomOffset := math32.NewVector3(
+		(rand.Float32()-0.5)*0.1,
+		(rand.Float32()-0.5)*0.1,
+		(rand.Float32()-0.5)*0.1,
+	)
+	finalPos := *position.Clone().Add(randomOffset)
+	particleMesh.SetPositionVec(&finalPos)
 
 	// Orient particle in direction of movement
 	yaw := math32.Atan2(newDir.Z, newDir.X)
@@ -107,16 +113,19 @@ func createWindParticle(scene *core.Node, position, direction math32.Vector3, sp
 
 	scene.Add(particleMesh)
 
+	// Use consistent initial speed
+	initialSpeed := speed * (1.0 + (rand.Float32()-0.5)*0.1) // Only 5% variation
+
 	return &WindParticle{
 		Mesh:        particleMesh,
-		Velocity:    *newDir.MultiplyScalar(speed),
-		Position:    position.Clone(),
+		Velocity:    *newDir.MultiplyScalar(initialSpeed),
+		Position:    finalPos.Clone(),
 		Mass:        1.0,
-		Lifespan:    5.0,
+		Lifespan:    15.0, // Increased for longer tracking
 		Elapsed:     0,
 		Alive:       true,
-		Temperature: 20.0,
-		Turbulence:  rand.Float32() * 0.3,
+		Temperature: 20.0 + (rand.Float32()-0.5)*1.0, // Minimal temperature variation
+		Turbulence:  rand.Float32() * 0.1,            // Minimal turbulence
 	}
 }
 
@@ -137,10 +146,10 @@ func updateWindParticles(deltaTime float32, scene *core.Node, mesh *core.Node) {
 		// Update physics
 		updatePhysics(particle, mesh, deltaTime)
 
-		// Remove particles that are too far from the scene
+		// Keep particles within bounds but don't remove them
 		if particle.Position.Length() > 20 {
-			scene.Remove(particle.Mesh)
-			continue
+			// Instead of removing, reset position to source
+			particle.Position.MultiplyScalar(19.0 / particle.Position.Length())
 		}
 
 		// Keep active particles
@@ -264,9 +273,9 @@ func initParticles(count int, scene *core.Node) []Particle {
 			for z := 0; z < gridSize && index < count; z++ {
 				// Calculate position in world space
 				position := math32.NewVector3(
-					float32(x)*spacing-10.0, // Range [-10, 10]
-					float32(y)*spacing/4,    // Range [0, 5]
-					float32(z)*spacing-10.0, // Range [-10, 10]
+					float32(x)*spacing-10.0+rand.Float32()*0.1, // Add small random offset
+					float32(y)*spacing/4+rand.Float32()*0.1,
+					float32(z)*spacing-10.0+rand.Float32()*0.1,
 				)
 
 				// Create visualization
@@ -276,19 +285,22 @@ func initParticles(count int, scene *core.Node) []Particle {
 				sphereMesh.SetPosition(position.X, position.Y, position.Z)
 				scene.Add(sphereMesh)
 
+				// Initialize with small random velocities
 				particles[index] = Particle{
-					X:    position.X,
-					Y:    position.Y,
-					Z:    position.Z,
-					VX:   0,
-					VY:   0,
-					VZ:   0,
-					Mesh: sphereMesh,
+					X:     position.X,
+					Y:     position.Y,
+					Z:     position.Z,
+					VX:    (rand.Float32() - 0.5) * 0.5, // Small initial velocity
+					VY:    (rand.Float32() - 0.5) * 0.5,
+					VZ:    (rand.Float32() - 0.5) * 0.5,
+					Speed: rand.Float32() * 2.0, // Random initial speed
+					Mesh:  sphereMesh,
 				}
 				index++
 			}
 		}
 	}
+	log.Printf("Initialized %d particles with random velocities", count)
 	return particles
 }
 
@@ -374,8 +386,27 @@ func drawParticles() {
 func initializeFluidSimulation(scn *core.Node, sources []WindSource) {
 	scene = scn
 	windSources = sources
-	vectorField = initVectorField(20, 5, 20, 10, 5, 10) // World dimensions with resolution
-	fluidParticles = initParticles(1000, scene)         // Create 1000 particles in a grid
+	vectorField = initVectorField(20, 5, 20, 10, 5, 10)
+
+	// Initialize fluid particles
+	fluidParticles = initParticles(500, scene)
+
+	// Create initial wind particles
+	windParticles = nil // Clear any existing particles
+
+	// Create particles for each source
+	particlesPerSource := 50 // Increased for better data collection
+	for _, source := range sources {
+		for i := 0; i < particlesPerSource; i++ {
+			particle := createWindParticle(scene, source.Position, source.Direction, source.Speed)
+			if particle != nil {
+				windParticles = append(windParticles, particle)
+			}
+		}
+	}
+
+	log.Printf("Initialized simulation with %d wind sources, %d wind particles, and %d fluid particles",
+		len(sources), len(windParticles), len(fluidParticles))
 }
 
 func simulateFluid(deltaTime float32, obstMesh *core.Node) {

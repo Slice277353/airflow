@@ -150,6 +150,10 @@ func main() {
 			welcomeScreen.SetSize(float32(width), float32(height))
 			updateWelcomeScreenLayout(width, height)
 		}
+		// Update plots panel position
+		if globalPlotsPanel != nil {
+			globalPlotsPanel.SetPosition(float32(width)-globalPlotsPanel.Width()-10, 10)
+		}
 	}
 	a.Subscribe(window.OnWindowSize, onResize)
 	onResize("", nil)
@@ -188,6 +192,7 @@ func main() {
 
 		if simulationStarted && windEnabled {
 			simulateFluid(float32(deltaTime.Seconds()), scene)
+			recordSimulationFrame()
 		}
 
 		renderer.Render(scene, cam)
