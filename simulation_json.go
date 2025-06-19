@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+const (
+	airDensity       = 1.225
+	dragCoefficient  = 0.47
+	area             = 1.0
+	gravity          = -9.8
+	buoyancyFactor   = 0.1
+	turbulenceFactor = 0.5
+	thermalDiffusion = 0.02
+)
+
 type ParticleData struct {
 	Position struct {
 		X, Y, Z float32

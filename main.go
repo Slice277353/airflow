@@ -19,14 +19,12 @@ import (
 )
 
 var (
-	scene             *core.Node
-	mesh              *core.Node
-	windEnabled       bool
 	welcomeScreen     *gui.Panel
 	controlPanel      *gui.Panel
 	simulationStarted bool
 	titleLabel        *gui.Label
 	startButton       *gui.Button
+	contentPanel      *gui.Panel // Add this missing variable
 )
 
 // Import ModelLoader from model_loader.go
@@ -191,7 +189,7 @@ func main() {
 		a.Gls().Clear(gls.DEPTH_BUFFER_BIT | gls.STENCIL_BUFFER_BIT | gls.COLOR_BUFFER_BIT)
 
 		if simulationStarted && windEnabled {
-			simulateFluid(float32(deltaTime.Seconds()), scene)
+			simulateFluid(float32(deltaTime.Seconds()), mesh) // mesh теперь передаётся
 			recordSimulationFrame()
 		}
 

@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"runtime"
 	"strconv"
 
+	"github.com/g3n/engine/core"
+	"github.com/g3n/engine/graphic"
 	"github.com/g3n/engine/math32"
 	"github.com/g3n/engine/texture"
 
@@ -19,6 +20,11 @@ import (
 
 var (
 	globalPlotsPanel *gui.Panel
+	// --- Remade wind source system ---
+	draggingWindSourceIdx = -1
+	dragOffset            *math32.Vector3 // Offset between wind source and mouse at drag start
+	windSourceControlMode = "mouse"       // "mouse" or "wasd"
+	modeLabel             *gui.Label
 )
 
 // getPythonPath returns the appropriate Python interpreter path based on OS
@@ -50,13 +56,6 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 	width, _ := window.Get().GetSize()
 	plotsPanel.SetPosition(float32(width)-plotsPanel.Width()-10, 10)
 
-	// Add analyze button (moved up before it's referenced)
-	analyzeBtn := gui.NewButton("Start Recording")
-	analyzeBtn.SetSize(120, 30)
-	analyzeBtn.SetPosition(140, 10)
-	analyzeBtn.SetEnabled(false) // Initially disabled
-	controlPanel.Add(analyzeBtn)
-
 	// Toggle wind button
 	btn := gui.NewButton("Wind OFF")
 	btn.SetPosition(10, 10)
@@ -68,39 +67,11 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 			// Starting wind
 			windEnabled = true
 			btn.Label.SetText("Wind ON")
-			analyzeBtn.SetEnabled(true) // Enable recording while wind is running
 			initializeFluidSimulation(scene, *windSources)
 		} else {
-			// Stopping wind - save data if we were recording
-			if isRecording {
-				stopRecording()
-
-				// Save and process the data
-				filepath, err := saveSimulationData()
-				if err != nil {
-					log.Println("Error saving simulation data:", err)
-				} else {
-					log.Printf("Saved simulation data to: %s", filepath)
-
-					// Process with Python script using virtual environment
-					cmd := exec.Command(getPythonPath(), "script.py", filepath)
-					output, err := cmd.CombinedOutput()
-					if err != nil {
-						log.Printf("Error running analysis script: %v\nOutput: %s", err, string(output))
-					} else {
-						log.Printf("Analysis complete: %s", string(output))
-
-						// Update plot display
-						updatePlots(plotsPanel, filepath)
-					}
-				}
-			}
-
-			// Clean up simulation
+			// Stopping wind - stop recording and process
 			windEnabled = false
 			btn.Label.SetText("Wind OFF")
-			analyzeBtn.Label.SetText("Start Recording")
-			analyzeBtn.SetEnabled(false)
 			for _, p := range windParticles {
 				if p != nil && p.Mesh != nil {
 					scene.Remove(p.Mesh)
@@ -111,24 +82,6 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 		}
 	})
 	controlPanel.Add(btn)
-
-	// Analyze (now Recording) button click handler
-	analyzeBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		if !windEnabled {
-			log.Println("Wind must be enabled to record simulation")
-			return
-		}
-
-		if !isRecording {
-			// Start recording
-			startRecording()
-			analyzeBtn.Label.SetText("Stop Recording")
-		} else {
-			// Stop recording but keep wind running
-			stopRecording()
-			analyzeBtn.Label.SetText("Start Recording")
-		}
-	})
 
 	// Import model button
 	importBtn := gui.NewButton("Import Model")
@@ -165,94 +118,28 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 	addWindBtn.SetSize(120, 30)
 	addWindBtn.SetPosition(10, 90)
 	addWindBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		// Create a function to handle mouse click for placement
+		const subID = "wind_source_placement"
 		mouseHandler := func(evname string, ev interface{}) {
 			mev := ev.(*window.MouseEvent)
-
-			// Create a ray from the camera through the mouse position
-			width, _ := window.Get().GetSize()
-			x := 2.0*float32(mev.Xpos)/float32(width) - 1.0
-			y := -2.0*float32(mev.Ypos)/float32(width) + 1.0
-
-			ray := localcam.NewRayFromMouse(cam, x, y)
-
-			// Calculate intersection with y=1 plane (ground plane)
-			groundNormal := &math32.Vector3{X: 0, Y: 1, Z: 0}
-			groundPoint := &math32.Vector3{X: 0, Y: 1, Z: 0}
-
-			// Get ray vectors
-			rayOrigin := ray.Origin()
-			rayDir := ray.Direction()
-
-			// Calculate intersection using plane equation
-			denom := rayDir.Dot(groundNormal)
-			if math32.Abs(denom) > 1e-6 {
-				p0l0 := groundPoint.Clone().Sub(&rayOrigin)
-				t := p0l0.Dot(groundNormal) / denom
-				if t >= 0 {
-					// Calculate intersection point
-					intersectPoint := rayOrigin.Clone()
-					directionScaled := rayDir.Clone().MultiplyScalar(t)
-					intersectPoint.Add(directionScaled)
-
-					// Add the wind source at the intersection point
-					*windSources = addWindSource(*windSources, scene, *intersectPoint)
-					updateWindControls(controlPanel, windSources)
-				}
+			pt := getSceneIntersection(mev, cam, scene)
+			if pt == nil {
+				window.Get().UnsubscribeID(window.OnMouseDown, subID)
+				return
 			}
-
-			// Remove the mouse handler after placement
-			window.Get().UnsubscribeID(window.OnMouseDown, "wind_source_placement")
+			x, z := clampToEnvironment(pt.X, pt.Z)
+			pt.X = x
+			pt.Z = z
+			*windSources = addWindSourceClamped(*windSources, scene, *pt)
+			updateWindControls(controlPanel, windSources)
+			window.Get().UnsubscribeID(window.OnMouseDown, subID)
 		}
-
-		// Subscribe to mouse click with an ID for later removal
-		window.Get().SubscribeID(window.OnMouseDown, "wind_source_placement", mouseHandler)
+		window.Get().SubscribeID(window.OnMouseDown, subID, mouseHandler)
 	})
 	controlPanel.Add(addWindBtn)
 
-	// Start recording button
-	recordBtn := gui.NewButton("Start Recording")
-	recordBtn.SetSize(120, 30)
-	recordBtn.SetPosition(140, 50)
-	recordBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		if len(simulationHistory) == 0 {
-			recordBtn.Label.SetText("Stop Recording")
-			simulationHistory = make([]SimulationSnapshot, 0)
-			// Initialize first frame immediately
-			recordSimulationFrame()
-		} else {
-			recordBtn.Label.SetText("Start Recording")
-			// Save data when stopping
-			if len(simulationHistory) > 0 {
-				_, err := saveSimulationData()
-				if err != nil {
-					log.Println("Error saving simulation data:", err)
-				}
-				// Clear history after saving
-				simulationHistory = nil
-			}
-		}
-	})
-	controlPanel.Add(recordBtn)
-
-	// Export data button
-	exportBtn := gui.NewButton("Export Data")
-	exportBtn.SetSize(120, 30)
-	exportBtn.SetPosition(140, 90)
-	exportBtn.Subscribe(gui.OnClick, func(name string, ev interface{}) {
-		if filepath, err := saveSimulationData(); err != nil {
-			log.Println("Error saving data:", err)
-		} else {
-			// Run Python script with the exported data using virtual environment
-			cmd := exec.Command(getPythonPath(), "script.py", filepath)
-			if err := cmd.Run(); err != nil {
-				log.Println("Error running analysis script:", err)
-			}
-		}
-	})
-	controlPanel.Add(exportBtn)
-
 	updateWindControls(controlPanel, windSources)
+	updateModeLabel()
+	enableWindSourceWASDControl(windSources)
 }
 
 func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
@@ -267,6 +154,7 @@ func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
 
 	// Add controls for each wind source
 	for i := range *windSources {
+		idx := i // capture the current value of i
 		// Source label
 		label := gui.NewLabel(fmt.Sprintf("Wind Source %d", i+1))
 		label.SetPosition(10, y)
@@ -280,11 +168,6 @@ func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
 
 		speedInput := gui.NewEdit(60, fmt.Sprintf("%.1f", (*windSources)[i].Speed))
 		speedInput.SetPosition(80, y)
-		speedInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
-			if val, err := strconv.ParseFloat(speedInput.Text(), 32); err == nil {
-				(*windSources)[i].Speed = float32(val)
-			}
-		})
 		panel.Add(speedInput)
 		y += 25
 
@@ -295,11 +178,6 @@ func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
 
 		tempInput := gui.NewEdit(60, fmt.Sprintf("%.1f", (*windSources)[i].Temperature))
 		tempInput.SetPosition(80, y)
-		tempInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
-			if val, err := strconv.ParseFloat(tempInput.Text(), 32); err == nil {
-				(*windSources)[i].Temperature = float32(val)
-			}
-		})
 		panel.Add(tempInput)
 		y += 25
 
@@ -324,7 +202,25 @@ func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
 		zInput.SetPosition(130, y)
 		panel.Add(zInput)
 
-		// Update direction handler
+		// Update speed control handler
+		speedInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
+			if val, err := strconv.ParseFloat(speedInput.Text(), 32); err == nil {
+				(*windSources)[idx].Speed = float32(val)
+				// Force immediate update of the vector field
+				updateVectorFieldFromSource(&(*windSources)[idx])
+			}
+		})
+
+		// Update temperature control handler
+		tempInput.Subscribe(gui.OnChange, func(name string, ev interface{}) {
+			if val, err := strconv.ParseFloat(tempInput.Text(), 32); err == nil {
+				(*windSources)[idx].Temperature = float32(val)
+				// Force immediate update of the vector field
+				updateVectorFieldFromSource(&(*windSources)[idx])
+			}
+		})
+
+		// Update direction handler with immediate effect
 		updateDirFunc := func() {
 			x, _ := strconv.ParseFloat(xInput.Text(), 32)
 			y, _ := strconv.ParseFloat(yInput.Text(), 32)
@@ -332,10 +228,11 @@ func updateWindControls(panel *gui.Panel, windSources *[]WindSource) {
 			dir := math32.NewVector3(float32(x), float32(y), float32(z))
 			if dir.Length() > 0 {
 				dir.Normalize()
-				(*windSources)[i].Direction = *dir
+				(*windSources)[idx].Direction = *dir
+				// Force immediate update of the vector field
+				updateVectorFieldFromSource(&(*windSources)[idx])
 			}
 		}
-
 		xInput.Subscribe(gui.OnChange, func(name string, ev interface{}) { updateDirFunc() })
 		yInput.Subscribe(gui.OnChange, func(name string, ev interface{}) { updateDirFunc() })
 		zInput.Subscribe(gui.OnChange, func(name string, ev interface{}) { updateDirFunc() })
@@ -497,4 +394,221 @@ func updatePlots(plotsPanel *gui.Panel, filepath string) {
 
 	// Show the plots panel
 	plotsPanel.SetVisible(true)
+
+	// --- Add info panel for lift and drag forces ---
+	// Remove any existing info panel
+	for _, child := range scene.Children() {
+		if panel, ok := child.(*gui.Panel); ok && panel.Name() == "info_panel" {
+			scene.Remove(panel)
+		}
+	}
+
+	// Calculate forces (call Go functions)
+	avgDrag := calculateAverageDragForce()
+	avgLift := calculateAverageLiftForce()
+
+	// Create info panel
+	_, winHeight := window.Get().GetSize()
+	infoPanel := gui.NewPanel(260, 80)
+	infoPanel.SetName("info_panel")
+	infoPanel.SetColor4(&math32.Color4{R: 0.1, G: 0.1, B: 0.1, A: 0.85})
+	infoPanel.SetBorders(1, 1, 1, 1)
+	infoPanel.SetPosition(10, float32(winHeight)-90) // Lower left corner
+
+	// Add labels
+	labelTitle := gui.NewLabel("Simulation Forces")
+	labelTitle.SetFontSize(18)
+	labelTitle.SetColor(&math32.Color{R: 1, G: 1, B: 1})
+	labelTitle.SetPosition(10, 8)
+	infoPanel.Add(labelTitle)
+
+	labelDrag := gui.NewLabel(fmt.Sprintf("Average Drag: %.3f N", avgDrag))
+	labelDrag.SetFontSize(15)
+	labelDrag.SetColor(&math32.Color{R: 0.8, G: 0.8, B: 1})
+	labelDrag.SetPosition(10, 32)
+	infoPanel.Add(labelDrag)
+
+	labelLift := gui.NewLabel(fmt.Sprintf("Average Lift: %.3f N", avgLift))
+	labelLift.SetFontSize(15)
+	labelLift.SetColor(&math32.Color{R: 0.8, G: 1, B: 0.8})
+	labelLift.SetPosition(10, 54)
+	infoPanel.Add(labelLift)
+
+	scene.Add(infoPanel)
+}
+
+// --- Remade wind source system ---
+// Clamp a position to environment bounds
+func clampToEnvironment(x, z float32) (float32, float32) {
+	if x < -10 {
+		x = -10
+	}
+	if x > 10 {
+		x = 10
+	}
+	if z < -10 {
+		z = -10
+	}
+	if z > 10 {
+		z = 10
+	}
+	return x, z
+}
+
+// Add a wind source at a given position (clamped if needed)
+func addWindSourceClamped(sources []WindSource, scene *core.Node, position math32.Vector3) []WindSource {
+	x, z := clampToEnvironment(position.X, position.Z)
+	position.X = x
+	position.Z = z
+	return addWindSource(sources, scene, position)
+}
+
+// Helper: get intersection with the first visible mesh (e.g., floor or imported model)
+func getSceneIntersection(mev *window.MouseEvent, cam camera.ICamera, scene *core.Node) *math32.Vector3 {
+	width, height := window.Get().GetSize()
+	xn := 2.0*float32(mev.Xpos)/float32(width) - 1.0
+	yn := -2.0*float32(mev.Ypos)/float32(height) + 1.0
+	ray := localcam.NewRayFromMouse(cam, xn, yn)
+
+	// Try to intersect with the first mesh in the scene (e.g., the floor)
+	for _, child := range scene.Children() {
+		if mesh, ok := child.(*graphic.Mesh); ok {
+			if pt, ok := rayMeshIntersection(ray, mesh); ok {
+				return pt
+			}
+		}
+	}
+	// Fallback: intersect with y=0 plane
+	groundNormal := math32.NewVector3(0, 1, 0)
+	groundPoint := math32.NewVector3(0, 0, 0)
+	rayOrigin := ray.Origin()
+	rayDir := ray.Direction()
+	denom := rayDir.Dot(groundNormal)
+	if math32.Abs(denom) > 1e-6 {
+		p0l0 := groundPoint.Clone().Sub(&rayOrigin)
+		t := p0l0.Dot(groundNormal) / denom
+		if t >= 0 {
+			intersectPoint := (&rayOrigin).Clone().Add((&rayDir).Clone().MultiplyScalar(t))
+			return intersectPoint
+		}
+	}
+	return nil
+}
+
+// Helper: ray-mesh intersection (only works for planes and simple meshes)
+func rayMeshIntersection(ray *math32.Ray, mesh *graphic.Mesh) (*math32.Vector3, bool) {
+	geom := mesh.GetGeometry()
+	if geom == nil {
+		return nil, false
+	}
+	posAttr := geom.VBO(0) // 0 = position
+	if posAttr == nil {
+		return nil, false
+	}
+	positions := posAttr.Buffer().ToFloat32()
+	indices := geom.Indices()
+	worldMatrix := mesh.ModelMatrix()
+	if len(indices) == 0 {
+		for i := 0; i+2 < len(positions)/3; i += 3 {
+			a := math32.NewVector3(positions[3*i+0], positions[3*i+1], positions[3*i+2]).ApplyMatrix4(worldMatrix)
+			b := math32.NewVector3(positions[3*(i+1)+0], positions[3*(i+1)+1], positions[3*(i+1)+2]).ApplyMatrix4(worldMatrix)
+			c := math32.NewVector3(positions[3*(i+2)+0], positions[3*(i+2)+1], positions[3*(i+2)+2]).ApplyMatrix4(worldMatrix)
+			if pt, ok := rayTriangleIntersection(ray, *a, *b, *c); ok {
+				return pt, true
+			}
+		}
+	} else {
+		for i := 0; i+2 < len(indices); i += 3 {
+			ia := indices[i]
+			ib := indices[i+1]
+			ic := indices[i+2]
+			a := math32.NewVector3(positions[3*ia+0], positions[3*ia+1], positions[3*ia+2]).ApplyMatrix4(worldMatrix)
+			b := math32.NewVector3(positions[3*ib+0], positions[3*ib+1], positions[3*ib+2]).ApplyMatrix4(worldMatrix)
+			c := math32.NewVector3(positions[3*ic+0], positions[3*ic+1], positions[3*ic+2]).ApplyMatrix4(worldMatrix)
+			if pt, ok := rayTriangleIntersection(ray, *a, *b, *c); ok {
+				return pt, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// Helper: ray-triangle intersection (Möller–Trumbore algorithm)
+func rayTriangleIntersection(ray *math32.Ray, a, b, c math32.Vector3) (*math32.Vector3, bool) {
+	e1 := (&b).Clone().Sub(&a)
+	e2 := (&c).Clone().Sub(&a)
+	dir := ray.Direction()
+	h := (&dir).Clone().Cross(e2)
+	det := e1.Dot(h)
+	if det > -1e-6 && det < 1e-6 {
+		return nil, false
+	}
+	invDet := 1.0 / det
+	org := ray.Origin()
+	s := (&org).Clone().Sub(&a)
+	u := s.Dot(h) * invDet
+	if u < 0.0 || u > 1.0 {
+		return nil, false
+	}
+	q := s.Clone().Cross(e1)
+	v := dir.Dot(q) * invDet
+	if v < 0.0 || u+v > 1.0 {
+		return nil, false
+	}
+	t := e2.Dot(q) * invDet
+	if t < 0 {
+		return nil, false
+	}
+	intersect := (&org).Clone().Add((&dir).Clone().MultiplyScalar(t))
+	return intersect, true
+}
+
+// --- Mode indicator label ---
+func updateModeLabel() {
+	if modeLabel == nil {
+		modeLabel = gui.NewLabel("")
+		modeLabel.SetFontSize(32)
+		modeLabel.SetColor(&math32.Color{R: 1, G: 1, B: 0})
+		width, height := window.Get().GetSize()
+		modeLabel.SetPosition(float32(width)/2-60, float32(height)/2-30)
+		scene.Add(modeLabel)
+	}
+	modeLabel.SetVisible(true)
+}
+
+// --- WASD control logic ---
+func enableWindSourceWASDControl(windSources *[]WindSource) {
+	const moveStep = 0.2
+	window.Get().SubscribeID(window.OnKeyDown, "wasd_mode_keydown", func(evname string, ev interface{}) {
+		kev := ev.(*window.KeyEvent)
+		if windSourceControlMode != "wasd" || draggingWindSourceIdx < 0 {
+			return
+		}
+		ws := &(*windSources)[draggingWindSourceIdx]
+		switch kev.Key {
+		case window.KeyW:
+			ws.Position.Z -= moveStep
+		case window.KeyS:
+			ws.Position.Z += moveStep
+		case window.KeyA:
+			ws.Position.X -= moveStep
+		case window.KeyD:
+			ws.Position.X += moveStep
+		}
+		x, z := clampToEnvironment(ws.Position.X, ws.Position.Z)
+		ws.Position.X = x
+		ws.Position.Z = z
+		if ws.Node != nil {
+			ws.Node.SetPositionVec(&ws.Position)
+		}
+		updateVectorFieldFromSource(ws)
+		updateWindControls(controlPanel, windSources)
+	})
+	window.Get().SubscribeID(window.OnKeyDown, "wasd_mode_esc", func(evname string, ev interface{}) {
+		kev := ev.(*window.KeyEvent)
+		if kev.Key == window.KeyEscape && windSourceControlMode == "wasd" {
+			windSourceControlMode = "mouse"
+			updateModeLabel()
+		}
+	})
 }
