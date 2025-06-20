@@ -125,29 +125,44 @@ func recordSimulationFrame() {
 
 func calculateAverageDragForce() float32 {
 	if len(windParticles) == 0 {
+		log.Printf("No wind particles for drag force calculation")
 		return 0
 	}
 	var totalForce float32
 	for _, p := range windParticles {
 		if p != nil && p.Alive {
 			velocity := p.Velocity.Length()
+			// Defensive: if Mass is zero, set to 1
+			mass := p.Mass
+			if mass == 0 {
+				mass = 1.0
+			}
 			totalForce += 0.5 * airDensity * dragCoefficient * area * velocity * velocity
 		}
 	}
-	return totalForce / float32(len(windParticles))
+	avg := totalForce / float32(len(windParticles))
+	log.Printf("Calculated average drag force: %f N", avg)
+	return avg
 }
 
 func calculateAverageLiftForce() float32 {
 	if len(windParticles) == 0 {
+		log.Printf("No wind particles for lift force calculation")
 		return 0
 	}
 	var totalForce float32
 	for _, p := range windParticles {
 		if p != nil && p.Alive {
-			totalForce += p.Mass * buoyancyFactor * (p.Temperature - 20.0)
+			mass := p.Mass
+			if mass == 0 {
+				mass = 1.0
+			}
+			totalForce += mass * buoyancyFactor * (p.Temperature - 20.0)
 		}
 	}
-	return totalForce / float32(len(windParticles))
+	avg := totalForce / float32(len(windParticles))
+	log.Printf("Calculated average lift force: %f N", avg)
+	return avg
 }
 
 func startRecording() {
@@ -167,7 +182,8 @@ func saveSimulationData() (string, error) {
 	}
 
 	filename := fmt.Sprintf("simulation_data_%d.json", time.Now().UnixNano())
-	filepath := fmt.Sprintf("c:/Users/xmkin/Music/da/airflow/%s", filename)
+	// Save in current working directory
+	filepath := filename
 
 	// Print summary before saving
 	log.Printf("\nSaving simulation data:")

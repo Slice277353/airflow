@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 
@@ -68,10 +69,34 @@ func initializeUI(panel *gui.Panel, windSources *[]WindSource, ml *ModelLoader, 
 			windEnabled = true
 			btn.Label.SetText("Wind ON")
 			initializeFluidSimulation(scene, *windSources)
+			startRecording() // Start recording simulation data
 		} else {
 			// Stopping wind - stop recording and process
 			windEnabled = false
 			btn.Label.SetText("Wind OFF")
+
+			// --- Save simulation data and run Python script ---
+			filepath, err := saveSimulationData()
+			if err != nil {
+				log.Printf("Error saving simulation data: %v", err)
+				return
+			}
+
+			pythonPath := getPythonPath()
+			cmd := exec.Command(pythonPath, "script.py", filepath)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			log.Printf("Running Python script: %s script.py %s", pythonPath, filepath)
+			err = cmd.Run()
+			if err != nil {
+				log.Printf("Error running Python script: %v", err)
+				return
+			}
+
+			// Update plots panel with new images and info panel (forces)
+			updatePlots(globalPlotsPanel, filepath)
+
+			// Now clear wind and fluid particles
 			for _, p := range windParticles {
 				if p != nil && p.Mesh != nil {
 					scene.Remove(p.Mesh)
